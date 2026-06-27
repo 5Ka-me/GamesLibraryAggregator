@@ -1,0 +1,69 @@
+/* Тёмная тема — по умолчанию */
+:root,
+:root[data-theme='dark'] {
+  --bg: #121212;
+  --panel: #1a1a1a;
+  --panel-2: #222;
+  --text: #ececec;
+  --muted: #9aa0a6;
+  --border: #333;
+  --accent: #66c0f4;     /* Steam */
+  --epic: #c084fc;       /* Epic */
+  --on-accent: #08121a;
+  --input-bg: #202020;
+  --shadow: rgba(0, 0, 0, 0.45);
+}
+
+:root[data-theme='light'] {
+  --bg: #f4f6f9;
+  --panel: #ffffff;
+  --panel-2: #eef1f5;
+  --text: #1b1f24;
+  --muted: #5f6368;
+  --border: #d4d9e0;
+  --accent: #2a75bb;     /* Steam */
+  --epic: #7c3aed;       /* Epic */
+  --on-accent: #ffffff;
+  --input-bg: #ffffff;
+  --shadow: rgba(0, 0, 0, 0.12);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+a {
+  color: var(--accent);
+}
+
+code {
+  background: var(--panel-2);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+input {
+  background: var(--input-bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+button {
+  font-family: inherit;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed !important;
+}

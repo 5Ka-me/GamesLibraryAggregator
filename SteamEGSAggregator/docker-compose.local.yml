@@ -1,0 +1,13 @@
+# Local-development extras, layered on top of docker-compose.yml.
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
+services:
+  # Adminer — lightweight web UI for the database at http://localhost:8090
+  adminer:
+    image: adminer:latest
+    container_name: steamegs-adminer
+    restart: unless-stopped
+    ports:
+      - "8090:8080"
+    depends_on:
+      - db

@@ -1,0 +1,17 @@
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning"
+    }
+  },
+
+  "ConnectionStrings": {
+    "Default": "Host=localhost;Port=5432;Database=steamegs;Username=postgres;Password=postgres"
+  },
+
+  "Security": {
+    "_comment": "Generate with: openssl rand -base64 32",
+    "EncryptionKey": "REPLACE_WITH_BASE64_32_BYTE_KEY"
+  }
+}

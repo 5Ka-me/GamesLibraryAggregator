@@ -1,0 +1,62 @@
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: steamegs-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-steamegs}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - steamegs-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-steamegs}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Backend (.NET Web API). Migrations are applied automatically on startup.
+  api:
+    build:
+      context: .
+      dockerfile: SteamEGSAggregator/Dockerfile
+    container_name: steamegs-api
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development}
+      ASPNETCORE_HTTP_PORTS: "8080"
+      ConnectionStrings__Default: "Host=db;Port=5432;Database=${POSTGRES_DB:-steamegs};Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:-postgres}"
+      # REQUIRED: 32-byte base64 key. Set it in .env. Changing the key makes existing encrypted secrets unreadable.
+      Security__EncryptionKey: ${SECURITY_ENCRYPTION_KEY}
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Frontend (React, built and served via nginx).
+  frontend:
+    build:
+      context: ../steam-egs-aggregator
+      dockerfile: Dockerfile
+      args:
+        # The user's browser calls the backend at this address (the port published by the api service).
+        REACT_APP_API_URL: ${REACT_APP_API_URL:-http://localhost:8080}
+    container_name: steamegs-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - api
+
+# Adminer (DB web UI) is defined in docker-compose.local.yml for local development. Run with:
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
+#
+# NOTE: importing the login from an installed Epic Games Launcher (option B) does NOT work inside the
+# container — there is no access to Windows host files / DPAPI. Inside the container only option A
+# (pasting the authorizationCode) is available. For option B run the backend on the host: dotnet run.
+
+volumes:
+  steamegs-pgdata:

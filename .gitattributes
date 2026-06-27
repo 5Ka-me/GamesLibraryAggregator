@@ -1,0 +1,2 @@
+# Normalize line endings; let Git handle CRLF/LF automatically.
+* text=auto

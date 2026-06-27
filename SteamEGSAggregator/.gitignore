@@ -1,0 +1,12 @@
+## .NET
+bin/
+obj/
+.vs/
+*.user
+
+## Локальные секреты — НЕ коммитить (содержит Steam API key)
+appsettings.Development.json
+appsettings.*.Local.json
+
+## Docker volume данные (если вдруг окажутся в дереве)
+pgdata/
