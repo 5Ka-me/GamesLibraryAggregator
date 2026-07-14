@@ -41,6 +41,9 @@ namespace SteamEGSAggregator.Application.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("Country")
+                        .HasColumnType("text");
+
                     b.Property<string>("DisplayName")
                         .HasColumnType("text");
 
@@ -109,6 +112,9 @@ namespace SteamEGSAggregator.Application.Migrations
                     b.Property<DateTime?>("AcquisitionDate")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("AppName")
+                        .HasColumnType("text");
+
                     b.Property<string>("ExternalId")
                         .IsRequired()
                         .HasColumnType("text");
@@ -153,6 +159,9 @@ namespace SteamEGSAggregator.Application.Migrations
 
                     b.Property<string>("ApiKey")
                         .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Country")
                         .HasColumnType("text");
 
                     b.Property<string>("PersonaName")

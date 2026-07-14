@@ -1,0 +1,20 @@
+appId: com.5ka.steamegslauncher
+productName: Steam EGS Launcher
+directories:
+  buildResources: resources
+  output: dist
+files:
+  - out/**
+extraResources:
+  # Bundled legendary.exe (fetch with `npm run fetch:legendary` before packaging).
+  - from: resources/bin
+    to: bin
+    filter:
+      - '**/*'
+      - '!README.md'
+win:
+  target: nsis
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true

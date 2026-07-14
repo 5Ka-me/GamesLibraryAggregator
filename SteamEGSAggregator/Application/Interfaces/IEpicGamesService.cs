@@ -20,6 +20,9 @@ namespace Application.Interfaces
         /// <summary>Current EGS account (whether connected, display name).</summary>
         Task<EpicAccountDto> GetAccountAsync(CancellationToken ct);
 
+        /// <summary>Override the account country (ISO alpha-2) used for prices.</summary>
+        Task<EpicAccountDto> SetRegionAsync(string country, CancellationToken ct);
+
         /// <summary>Lazily resolves the exact EGS store page link by namespace (on click), cached in the DB.</summary>
         Task<string> GetStoreUrlAsync(string ns, string title, CancellationToken ct);
     }

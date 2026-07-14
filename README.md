@@ -1,139 +1,198 @@
-# Steam + EGS Library Aggregator
+# GL Aggregator
 
-A small web app that merges your **Steam** and **Epic Games Store** libraries into one searchable, themeable list. Multi-user: each device gets its own private, isolated workspace.
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/desktop-Windows-blue.svg)]()
+[![.NET 9](https://img.shields.io/badge/backend-.NET%209-512BD4.svg)]()
+[![Electron](https://img.shields.io/badge/launcher-Electron-47848F.svg)]()
+[![React](https://img.shields.io/badge/UI-React%2019-61DAFB.svg)]()
 
-- **Backend:** ASP.NET Core (.NET 9) Web API + EF Core + PostgreSQL
-- **Frontend:** React (CRA, TypeScript), served via nginx
-- **Infra:** Docker Compose (Postgres, API, frontend, Adminer)
+**One launcher for your Steam and Epic Games Store libraries.** A Heroic/Playnite-style desktop app
+plus a companion web app: merged game library, an integrated Steam store with cross-store price
+comparison, self-managed EGS downloads, playtime & achievements statistics.
+
+- [Features](#features)
+- [Repository layout](#repository-layout)
+- [How the data is fetched](#how-the-data-is-fetched)
+- [Quick start](#quick-start)
+- [Configuration](#configuration)
+- [API endpoints](#api-endpoints)
+- [Development](#development)
+- [Disclaimer](#disclaimer)
+- [Credits](#credits)
 
 ## Features
 
-- One combined library; a game owned on both stores is shown once with **both source tags** and per-source playtime.
-- Click a game to open its store page (Steam exact app page; EGS page resolved on demand and cached).
-- Search with clear button, source filters, incremental (lazy) loading, lazy-loaded & downscaled cover art.
-- Light/dark theme and EN/RU UI localization (default EN).
-- Per-device **workspaces** with secret tokens; secrets encrypted at rest.
+**Library**
+- One merged library: a game owned on both stores is a single card with per-store tags, playtime and install state.
+- Filters: All / Steam / Epic (AND semantics — both selected shows games owned on *both* stores), Installed, live search.
+- Launch installed games right from the card; full install/uninstall management on the game page.
+
+**Game page** (unified for every game — owned or not)
+- Steam / Epic tabs: description, genres, developer/publisher, screenshots (in-app lightbox viewer with zoom), trailers, review score & current players (Steam), 5-star rating (EGS).
+- Per-platform **Launch & install** section: Play / Install for owned platforms (EGS downloads via `legendary` with live progress), Buy + price for the others.
+- **Cross-store price comparison** in your regional currencies, converted to USD (`≈`) when the currencies differ.
+- Steam achievements with unlock progress and global rarity.
+
+**Store**
+- Steam front page: featured, specials, top sellers, new releases, coming soon, deals under a budget, genre rows, spotlight banners.
+- Full paginated section pages, live search-as-you-type, wishlist with Steam-like sorting/filters.
+- Items you already own are badged (`✓ Steam` / `✓ EGS`).
+
+**Statistics**
+- Games / total hours / top-10 by playtime across both stores (per-platform filter), Steam last-2-weeks activity.
+- EGS playtime is fetched from Epic's own services — both stores count.
+
+**Web app** — a lightweight browser version of the library (sync, search, filters, store links), multi-user via private workspace tokens.
+
+**Regional prices** — currencies follow each store account's region (auto-detected, overridable in Settings), USD fallback.
 
 ## Repository layout
 
+npm-workspaces monorepo:
+
 ```
 .
-├─ SteamEGSAggregator/        # .NET solution (API + Application library) + docker-compose.yml
-│  ├─ Application/            # services, EF Core, entities, migrations
-│  └─ SteamEGSAggregator/     # Web API (controllers, middlewares, Program.cs)
-└─ steam-egs-aggregator/      # React frontend
+├─ steam-egs-launcher/        # Electron desktop launcher (main / preload / React renderer)
+├─ steam-egs-aggregator/      # React web app (CRA), served via nginx in Docker
+├─ packages/shared/           # shared TS: API client, UI components, i18n, theming
+└─ SteamEGSAggregator/        # ASP.NET Core (.NET 9) API + EF Core + PostgreSQL
+   ├─ Application/            # services, entities, migrations
+   └─ SteamEGSAggregator/     # Web API host; docker-compose.yml lives next to it
 ```
+
+The launcher talks to the API over HTTP through its main process (no CORS), runs all OS-level work
+locally (installs, launches, library scans) and keeps secrets in the OS keystore (DPAPI).
 
 ## How the data is fetched
 
 | Source | Method |
 |--------|--------|
-| **Steam** | Official Web API `IPlayerService/GetOwnedGames` (requires an API key + a public profile). |
-| **EGS** | Epic's private "launcher" APIs (the same approach as the open-source [legendary](https://github.com/derrod/legendary)): exchange an `authorizationCode` → token → `library-service` → `catalog-service`. Epic has no public API for the owned library. |
+| Steam library | Official Web API `IPlayerService/GetOwnedGames` (user's API key, public profile) |
+| Steam store/details | Public storefront endpoints (`featuredcategories`, `appdetails`, search, `IStoreBrowseService`) |
+| Steam stats | `GetRecentlyPlayedGames`, `GetPlayerAchievements` + schema + global percentages |
+| EGS library & playtime | Epic's launcher APIs (the [legendary](https://github.com/derrod/legendary) approach): OAuth code → token → library/catalog/playtime services |
+| EGS store/details | Public Store GraphQL (offers, search, ratings) via the launcher's Chromium network stack |
+| EGS downloads | Bundled [legendary](https://github.com/derrod/legendary) CLI (fetched at build time, not committed) |
+| Steam install state | Local `libraryfolders.vdf` / `appmanifest_*.acf` scan |
+| FX rates | [open.er-api.com](https://open.er-api.com) daily USD rates (price comparison only) |
 
-**EGS login (two options):**
-- **A — manual:** open the login link, sign in, copy the `authorizationCode` from the JSON, paste it into the app.
-- **B — import:** read the saved login from an installed Epic Games Launcher (Windows DPAPI). Works only when the **backend runs on the host** (not in a container).
+Epic sign-in happens in an embedded window on Epic's official login page; the authorization code is
+exchanged both for the cloud library sync and for `legendary` downloads. There is no public Epic API
+for the owned library — the launcher uses the same private endpoints the Epic Games Launcher itself calls.
 
-Exact EGS store links are resolved lazily on click via the public Store GraphQL and cached.
+## Quick start
 
-## Quick start (Docker)
+### Prerequisites
+
+- **Windows 10/11** (the desktop launcher is Windows-only for now)
+- **Node.js 20+**, **.NET 9 SDK**, **Docker** (for PostgreSQL / the web stack)
+- A **Steam Web API key** ([get one here](https://steamcommunity.com/dev/apikey)) with a public profile
+
+### 1. Backend + web (Docker)
 
 ```bash
 cd SteamEGSAggregator
 cp .env.example .env
-# Edit .env — at minimum set SECURITY_ENCRYPTION_KEY:
-#   openssl rand -base64 32
+# REQUIRED: set SECURITY_ENCRYPTION_KEY in .env (openssl rand -base64 32)
 docker compose up -d --build
 ```
 
-- Frontend: http://localhost:3000
-- API / Swagger: http://localhost:8080/swagger
+- Web app: http://localhost:3000 · API/Swagger: http://localhost:8080/swagger
 
-Need a database UI? Add the local overlay (starts Adminer at http://localhost:8090):
+> EGS "import from installed launcher" (option B) doesn't work inside a container — for that, run
+> the backend on the host (step below). The embedded OAuth in the desktop launcher works either way.
 
-```bash
-docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
-```
-
-> EGS login option B (launcher import) does **not** work inside the container. For it, run the backend on the host (below).
-
-## Local development
-
-Requires .NET 9 SDK and Node 20+.
+### 2. Backend on the host (alternative to the API container)
 
 ```bash
-# 1) Database only
 cd SteamEGSAggregator
 docker compose up -d db
-
-# 2) Backend on the host (enables EGS launcher import on Windows)
 cp SteamEGSAggregator/appsettings.Development.json.example SteamEGSAggregator/appsettings.Development.json
 # put a base64 32-byte key into Security:EncryptionKey
-dotnet run --project SteamEGSAggregator/SteamEGSAggregator.csproj
-
-# 3) Frontend
-cd ../steam-egs-aggregator
-npm install
-REACT_APP_API_URL=http://localhost:5080 npm start
+dotnet run --project SteamEGSAggregator/SteamEGSAggregator.csproj   # → http://localhost:5080
 ```
 
-EF Core migrations are applied automatically on startup. To run them manually:
+EF Core migrations apply automatically on startup.
+
+### 3. Desktop launcher
 
 ```bash
-dotnet ef database update \
-  --project Application/SteamEGSAggregator.Application.csproj \
-  --startup-project SteamEGSAggregator/SteamEGSAggregator.csproj
+npm install                                  # repo root — installs all workspaces
+cd steam-egs-launcher && npm run fetch:legendary && cd ..   # EGS download engine (once)
+npm run dev:launcher                         # dev mode (expects the API on :5080)
 ```
 
-## Configuration & secrets
+First run: open **Settings** → save your Steam API key + SteamID64, press **Sign in to Epic
+(in-app)** — the library syncs and everything lights up.
 
-Nothing secret is committed. Local secrets live in git-ignored files:
+Package a Windows installer:
 
-| What | Where | Notes |
-|------|-------|-------|
-| Docker env | `SteamEGSAggregator/.env` | from `.env.example` |
-| Local dev config | `SteamEGSAggregator/SteamEGSAggregator/appsettings.Development.json` | from `appsettings.Development.json.example` |
+```bash
+npm run package:launcher                     # → steam-egs-launcher/dist/*.exe (NSIS)
+```
 
-Key settings:
+## Configuration
 
-- `SECURITY_ENCRYPTION_KEY` / `Security:EncryptionKey` — **required**, base64 32-byte AES key. Used to encrypt secrets (Steam API key, EGS tokens) at rest. Keep it stable; changing it makes existing encrypted values unreadable. The app refuses to start without it.
-- `POSTGRES_*` — database name/user/password.
-- `REACT_APP_API_URL` — backend URL baked into the frontend bundle at build time.
+Nothing secret is committed. Local secrets live in git-ignored files
+(`SteamEGSAggregator/.env`, `appsettings.Development.json`).
 
-The Steam API key is **not** configured in files — each user enters it in the app's Settings page and it is stored encrypted, per workspace.
+| Setting | Where | Notes |
+|---------|-------|-------|
+| `SECURITY_ENCRYPTION_KEY` | backend env / appsettings | **Required.** Base64 32-byte AES key; encrypts stored secrets. Keep it stable. |
+| `POSTGRES_*` | `SteamEGSAggregator/.env` | Database name/user/password for Docker |
+| `REACT_APP_API_URL` | web build arg | Backend URL baked into the web bundle |
+| `LAUNCHER_API_BASE` | launcher env | Backend URL (default `http://localhost:5080`; also editable in Settings) |
+| `LAUNCHER_STORE_CACHE_TTL` | launcher env | Storefront cache TTL in seconds (default 300) |
 
-The `EpicGames:ClientId/ClientSecret` in `appsettings.json` are the public Epic Games Launcher client credentials (the same ones `legendary` ships) — not secret.
-
-## Multi-user workspaces
-
-- On first load the frontend calls `POST /api/workspace` and stores the returned secret token in `localStorage`; it is sent as `X-Workspace-Token` on every request. Only the SHA-256 hash is stored server-side.
-- All data (`Games`, `GameEntries`, `EpicSession`, `SteamCredentials`) is scoped by `WorkspaceId` — different devices/users never see each other's data.
-- On the Settings page you can view/copy your token, or paste an existing one to open the same workspace on another device.
+Per-user settings (Steam API key, store regions, EGS install folder) are managed on the Settings
+page. The Epic client credentials in `appsettings.json` are the public Epic Games Launcher ones —
+not a secret.
 
 ## API endpoints
 
+All `/api/*` endpoints except `POST /api/workspace` require the `X-Workspace-Token` header.
+
 | Method | Path | Purpose |
 |--------|------|---------|
-| POST | `/api/workspace` | Create a workspace, return its token (no token required) |
+| POST | `/api/workspace` | Create a workspace, returns its secret token |
 | GET  | `/api/workspace/me` | Validate the current token |
 | GET  | `/api/library` | Combined library |
 | POST | `/api/library/sync` | Sync both sources |
-| GET  | `/api/steam/account` | Steam account info |
-| POST | `/api/steam/credentials` | Save & verify API key + SteamId |
-| POST | `/api/steam/sync` | Load Steam → DB |
-| GET  | `/api/epic/account` | EGS account info |
-| GET  | `/api/epic/login-url` | Login link (flow A) |
-| POST | `/api/epic/auth` | Exchange `authorizationCode` (flow A) |
-| POST | `/api/epic/import-launcher` | Import from launcher (flow B) |
-| POST | `/api/epic/sync` | Sync using the saved session |
+| GET/POST | `/api/steam/account`, `/api/steam/credentials` | Steam account info / save & verify the key |
+| POST | `/api/steam/sync` | Load the Steam library |
+| POST | `/api/steam/region` | Override the Steam store region |
+| GET  | `/api/steam/recent` | Games played in the last 2 weeks |
+| GET  | `/api/steam/achievements/{appId}` | Player achievements + global rarity |
+| GET  | `/api/epic/account`, `/api/epic/login-url` | EGS account info / login link |
+| POST | `/api/epic/auth`, `/api/epic/import-launcher`, `/api/epic/sync` | Auth (code / launcher import) and sync |
+| POST | `/api/epic/region` | Override the EGS store region |
 | GET  | `/api/epic/store-url` | Resolve a game's exact EGS store link |
 
-All `/api/*` endpoints except `POST /api/workspace` require a valid `X-Workspace-Token`.
+## Development
 
-## Production checklist
+```bash
+npm run build:shared      # compile packages/shared (needed by launcher typecheck & web build)
+npm run dev:web           # CRA dev server on :3000
+npm run dev:launcher      # electron-vite dev
+npm run build:web         # production web bundle
+npm run build:launcher    # compile the launcher (main/preload/renderer)
+```
 
-- Set your own `SECURITY_ENCRYPTION_KEY` (never reuse an example value).
-- Do not expose PostgreSQL publicly; put the API behind an HTTPS reverse proxy.
-- Restrict CORS in `Program.cs` to your domain (defaults to `http://localhost:3000`).
-- Keep `appsettings.Development.json` and `.env` out of version control (already git-ignored).
+The .NET solution builds with `dotnet build SteamEGSAggregator/SteamEGSAggregator.sln`.
+
+## Disclaimer
+
+This is an unofficial, non-commercial project. It is **not affiliated with, endorsed by, or
+connected to Valve Corporation or Epic Games, Inc.** Steam is a trademark of Valve Corporation;
+Epic Games and the Epic Games Store are trademarks of Epic Games, Inc. The app accesses the users'
+own accounts and libraries via the same endpoints the official clients use; use at your own risk
+and in accordance with the stores' terms of service.
+
+## Credits
+
+- [legendary](https://github.com/derrod/legendary) — the open-source Epic Games launcher CLI used
+  as the EGS download engine (downloaded at build time; GPL-3.0, invoked as a separate process).
+
+## License
+
+[MIT](LICENSE) © 5Ka-me

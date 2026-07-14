@@ -20,6 +20,12 @@ public class EpicController(IEpicGamesService egs) : ControllerBase
     public async Task<ActionResult<EpicAccountDto>> Account(CancellationToken ct)
         => Ok(await egs.GetAccountAsync(ct));
 
+    /// <summary>Override the account country (ISO alpha-2) used for prices.</summary>
+    [HttpPost("region")]
+    public async Task<ActionResult<EpicAccountDto>> SetRegion(
+        [FromBody] RegionRequest request, CancellationToken ct)
+        => Ok(await egs.SetRegionAsync(request.Country, ct));
+
     /// <summary>Flow A: exchange the pasted code for tokens + sync the library.</summary>
     [HttpPost("auth")]
     public async Task<ActionResult<EpicAuthResultModel>> Auth(

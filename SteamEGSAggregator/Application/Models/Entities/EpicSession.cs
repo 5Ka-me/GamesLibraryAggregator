@@ -14,6 +14,12 @@ public class EpicSession
 
     public string? DisplayName { get; set; }
 
+    /// <summary>
+    /// Account country (ISO 3166-1 alpha-2) used for storefront prices.
+    /// Auto-filled from Epic's account service when empty; user-overridable.
+    /// </summary>
+    public string? Country { get; set; }
+
     public string AccessToken { get; set; } = string.Empty;
 
     public string RefreshToken { get; set; } = string.Empty;

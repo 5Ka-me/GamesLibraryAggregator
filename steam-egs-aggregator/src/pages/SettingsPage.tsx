@@ -1,9 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { api, EpicAccount, SteamAccount } from '../api/client';
-import { useI18n } from '../i18n/I18nContext';
-import Header from '../components/Header';
-import SteamPanel from '../components/SteamPanel';
-import EpicPanel from '../components/EpicPanel';
+import { api, EpicAccount, SteamAccount, useI18n, Header, SteamPanel, EpicPanel } from '@app/shared';
 import WorkspacePanel from '../components/WorkspacePanel';
 
 const card: React.CSSProperties = {

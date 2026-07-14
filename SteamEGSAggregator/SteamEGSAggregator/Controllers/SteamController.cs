@@ -23,4 +23,21 @@ public class SteamController(ISteamService steam) : ControllerBase
     [HttpPost("sync")]
     public async Task<ActionResult<object>> Sync(CancellationToken ct)
         => Ok(new { count = await steam.SyncLibraryAsync(ct) });
+
+    /// <summary>Override the store region (ISO alpha-2) used for prices.</summary>
+    [HttpPost("region")]
+    public async Task<ActionResult<SteamAccountDto>> SetRegion(
+        [FromBody] RegionRequest request, CancellationToken ct)
+        => Ok(await steam.SetRegionAsync(request.Country, ct));
+
+    /// <summary>Games played in the last 2 weeks.</summary>
+    [HttpGet("recent")]
+    public async Task<ActionResult<List<SteamRecentGameDto>>> Recent(CancellationToken ct)
+        => Ok(await steam.GetRecentGamesAsync(ct));
+
+    /// <summary>Player achievements for a game (+ global unlock rates).</summary>
+    [HttpGet("achievements/{appId:int}")]
+    public async Task<ActionResult<SteamGameAchievementsDto>> Achievements(
+        int appId, [FromQuery] string? lang, CancellationToken ct)
+        => Ok(await steam.GetAchievementsAsync(appId, lang, ct));
 }

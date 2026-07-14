@@ -1,0 +1,20 @@
+{
+  "name": "steam-egs-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "workspaces": [
+    "packages/*",
+    "steam-egs-aggregator",
+    "steam-egs-launcher"
+  ],
+  "scripts": {
+    "build:shared": "npm run build --workspace @app/shared",
+    "watch:shared": "npm run watch --workspace @app/shared",
+    "dev:web": "npm start --workspace steam-egs-aggregator",
+    "build:web": "npm run build:shared && npm run build --workspace steam-egs-aggregator",
+    "dev:launcher": "npm run build:shared && npm run dev --workspace steam-egs-launcher",
+    "build:launcher": "npm run build:shared && npm run build --workspace steam-egs-launcher",
+    "package:launcher": "npm run build:shared && npm run package --workspace steam-egs-launcher"
+  }
+}

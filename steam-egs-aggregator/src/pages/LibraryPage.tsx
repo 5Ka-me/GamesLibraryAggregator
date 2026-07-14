@@ -1,8 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { api, Game } from '../api/client';
-import { useI18n } from '../i18n/I18nContext';
-import Header from '../components/Header';
-import GameList from '../components/GameList';
+import { api, Game, useI18n, Header, GameList } from '@app/shared';
 
 const LibraryPage: React.FC = () => {
   const { t } = useI18n();

@@ -1,0 +1,380 @@
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+
+export type Lang = 'en' | 'ru';
+
+type Dict = Record<string, string>;
+
+const en: Dict = {
+  'app.title': 'Game Library Aggregator',
+  'app.by': 'by',
+
+  'header.settings': '⚙️ Settings',
+  'header.back': '← Library',
+  'lang.label': 'Language',
+
+  'theme.toLight': '☀️ Light',
+  'theme.toDark': '🌙 Dark',
+
+  'lib.loading': 'Loading…',
+  'lib.error': 'Error',
+  'lib.empty': 'No games yet. Open “Settings” to sync Steam and/or connect EGS.',
+
+  'filter.all': 'All',
+  'filter.installed': 'Installed',
+  'filter.search': 'Search…',
+  'filter.clear': 'Clear search',
+
+  'sidebar.library': 'Library',
+  'sidebar.store': 'Store',
+  'sidebar.settings': 'Settings',
+  'sidebar.quit': 'Quit',
+  'settings.appearance': 'Appearance',
+
+  'store.home': 'Featured',
+  'store.wishlist': 'Wishlist',
+  'store.featuredSection': 'Featured & recommended',
+  'store.showAll': 'Show all →',
+  'store.section.specials': 'Specials',
+  'store.section.top_sellers': 'Top Sellers',
+  'store.section.new_releases': 'New Releases',
+  'store.section.coming_soon': 'Coming Soon',
+  'store.section.under_budget': 'Deals under $10',
+  'store.genre.action': 'Action',
+  'store.genre.rpg': 'RPG',
+  'store.genre.strategy': 'Strategy',
+  'store.genre.indie': 'Indie',
+
+  'details.openInSteam': 'Open in Steam',
+  'details.openInEpic': 'Open in Epic',
+  'details.actions': 'Launch & install',
+  'details.buy': 'Buy',
+  'details.cheaper': 'cheaper by {d} than on {p}',
+  'details.dearer': 'more expensive by {d} than on {p}',
+  'details.samePrice': 'same price as on {p}',
+  'details.epicNoData': 'This game was not found in the Epic Games Store.',
+  'details.notOnPlatform': 'not on this platform',
+  'details.rating': 'EGS rating',
+  'details.approxFx': 'Approximate — converted at the daily USD exchange rate',
+
+  'viewer.close': 'Close',
+  'viewer.openBrowser': 'Open in browser',
+
+  'settings.regions': 'Store regions',
+  'settings.regions.desc':
+    'Prices are shown in each store’s regional currency. Auto-detected from your accounts; override with a 2-letter ISO code (UA, KZ, US…). Fallback: US.',
+  'details.release': 'Release',
+  'details.developer': 'Developer',
+  'details.publisher': 'Publisher',
+  'details.genres': 'Genres',
+  'details.platforms': 'Platforms',
+  'details.reviews': 'Reviews',
+  'details.playersNow': 'playing now',
+  'details.myPlaytime': 'My playtime',
+  'details.hours': 'h',
+  'details.screenshots': 'Screenshots',
+  'details.achievements': 'Achievements',
+  'details.achProgress': '{u} of {t} unlocked',
+  'details.achUnavailable': 'Achievement data unavailable (no achievements, not played, or private profile).',
+  'details.metacritic': 'Metacritic',
+  'details.comingSoon': 'Coming soon',
+
+  'sidebar.stats': 'Statistics',
+  'stats.title': 'Statistics',
+  'stats.games': 'Games',
+  'stats.hours': 'Total hours',
+  'stats.played': 'Played at least once',
+  'stats.topByPlaytime': 'Top by playtime',
+  'stats.recent2w': 'Last 2 weeks (Steam)',
+  'stats.noData': 'No data yet — sync your libraries in Settings.',
+  'stats.noPlaytime': 'No playtime data for the selected platforms.',
+  'store.searchPlaceholder': 'Search the Steam store…',
+  'store.results': 'Search results',
+  'store.noResults': 'Nothing found.',
+  'store.free': 'Free',
+  'store.inLib.steam': 'Already in your Steam library',
+  'store.inLib.epic': 'Already in your EGS library',
+  'store.needSteam': 'Set your SteamID in Settings to load the wishlist.',
+  'store.wl.empty': 'The wishlist is empty or the profile is private.',
+  'store.wl.sort': 'Sort by',
+  'store.wl.sort.rank': 'Your rank',
+  'store.wl.sort.date': 'Date added',
+  'store.wl.sort.name': 'Name',
+  'store.wl.sort.price': 'Price',
+  'store.wl.sort.discount': 'Discount',
+  'store.wl.discountOnly': 'On sale only',
+  'store.wl.filter': 'Filter by name…',
+
+  'card.noImage': 'no image',
+  'card.hours': 'h',
+  'store.choose': 'Open in…',
+  'card.play': 'Play',
+  'card.install': 'Install',
+  'card.uninstall': 'Uninstall',
+  'card.cancel': 'Cancel',
+  'card.store': 'Store page',
+
+  'nav.library': '← Library',
+  'nav.downloads': '⬇ Downloads',
+  'downloads.title': 'Downloads',
+  'downloads.empty': 'No active or recent downloads.',
+  'downloads.done': 'Installed',
+  'downloads.error': 'Failed',
+
+  'epic.embeddedLogin': 'Sign in to Epic (in-app)',
+  'epic.embeddedDesc':
+    'Opens Epic sign-in inside the launcher, then authorizes downloads (legendary) and syncs your library.',
+  'epic.legendaryMissing':
+    'legendary was not found. EGS downloads are disabled — run "npm run fetch:legendary".',
+
+  'settings.steam': 'Steam',
+  'settings.epic': 'Epic Games Store',
+  'settings.account.steam': 'Steam',
+  'settings.account.epic': 'Epic Games',
+  'settings.notConfigured': '— not configured',
+  'settings.notConnected': '— not connected',
+  'settings.connected': 'connected',
+  'settings.syncSteam': 'Sync Steam',
+  'settings.syncEpic': 'Sync EGS',
+  'settings.syncing': 'Syncing…',
+  'settings.syncDone': 'Sync ({what}) finished.',
+
+  'steam.help': 'Get a key at',
+  'steam.publicProfile': '. Your profile must be public.',
+  'steam.apiKey': 'Steam API key',
+  'steam.steamId': 'SteamID64',
+  'steam.save': 'Save & verify',
+  'steam.saved': 'Saved',
+
+  'epic.variantAuto': 'Option A — automatic:',
+  'epic.autoDesc':
+    'if Epic Games Launcher is installed and signed in on this PC (works only when the backend runs on the host, not in a container).',
+  'epic.importLauncher': 'Import from launcher',
+  'epic.variantManual': 'Option B — manual:',
+  'epic.manualDesc': 'open Epic login, sign in, copy the {code} from the JSON and paste it here.',
+  'epic.openLogin': '1. Open Epic login page ↗',
+  'epic.pasteCode': '2. Paste authorizationCode',
+  'epic.connect': '3. Connect',
+  'epic.connectedAs': 'Connected{name}. EGS games: {count}.',
+  'epic.requiresLogin': 'Sign-in required.',
+
+  'ws.title': 'Workspace',
+  'ws.desc':
+    'Your private workspace token. Save it to open your library on another device or after clearing browser data. Anyone with this token sees your library — keep it secret.',
+  'ws.show': 'Show token',
+  'ws.hide': 'Hide',
+  'ws.copy': 'Copy',
+  'ws.copied': 'Copied!',
+  'ws.useExisting': 'Paste an existing token to switch workspace',
+  'ws.apply': 'Switch',
+
+  'common.error': 'Error',
+};
+
+const ru: Dict = {
+  'app.title': 'Game Library Aggregator',
+  'app.by': 'by',
+
+  'header.settings': '⚙️ Настройки',
+  'header.back': '← Библиотека',
+  'lang.label': 'Язык',
+
+  'theme.toLight': '☀️ Светлая',
+  'theme.toDark': '🌙 Тёмная',
+
+  'lib.loading': 'Загрузка…',
+  'lib.error': 'Ошибка',
+  'lib.empty': 'Игр пока нет. Откройте «Настройки» и синхронизируйте Steam и/или подключите EGS.',
+
+  'filter.all': 'Все',
+  'filter.installed': 'Установленные',
+  'filter.search': 'Поиск…',
+  'filter.clear': 'Очистить поиск',
+
+  'sidebar.library': 'Библиотека',
+  'sidebar.store': 'Магазин',
+  'sidebar.settings': 'Настройки',
+  'sidebar.quit': 'Выход',
+  'settings.appearance': 'Оформление',
+
+  'store.home': 'Главная',
+  'store.wishlist': 'Вишлист',
+  'store.featuredSection': 'Рекомендуемое',
+  'store.showAll': 'Показать все →',
+  'store.section.specials': 'Скидки',
+  'store.section.top_sellers': 'Лидеры продаж',
+  'store.section.new_releases': 'Новинки',
+  'store.section.coming_soon': 'Скоро выйдет',
+  'store.section.under_budget': 'Скидки до 500 ₽',
+  'store.genre.action': 'Экшен',
+  'store.genre.rpg': 'RPG',
+  'store.genre.strategy': 'Стратегии',
+  'store.genre.indie': 'Инди',
+
+  'details.openInSteam': 'Открыть в Steam',
+  'details.openInEpic': 'Открыть в Epic',
+  'details.actions': 'Запуск и установка',
+  'details.buy': 'Купить',
+  'details.cheaper': 'дешевле на {d}, чем в {p}',
+  'details.dearer': 'дороже на {d}, чем в {p}',
+  'details.samePrice': 'цена как в {p}',
+  'details.epicNoData': 'Игра не найдена в Epic Games Store.',
+  'details.notOnPlatform': 'нет на платформе',
+  'details.rating': 'Оценка EGS',
+  'details.approxFx': 'Приблизительно — по дневному курсу к доллару',
+
+  'viewer.close': 'Закрыть',
+  'viewer.openBrowser': 'Открыть в браузере',
+
+  'settings.regions': 'Регионы магазинов',
+  'settings.regions.desc':
+    'Цены показываются в региональной валюте каждого магазина. Определяется из аккаунтов автоматически; можно переопределить 2-буквенным ISO-кодом (UA, KZ, US…). Fallback: US.',
+  'details.release': 'Релиз',
+  'details.developer': 'Разработчик',
+  'details.publisher': 'Издатель',
+  'details.genres': 'Жанры',
+  'details.platforms': 'Платформы',
+  'details.reviews': 'Отзывы',
+  'details.playersNow': 'сейчас играют',
+  'details.myPlaytime': 'Наиграно',
+  'details.hours': 'ч',
+  'details.screenshots': 'Скриншоты',
+  'details.achievements': 'Достижения',
+  'details.achProgress': 'Открыто {u} из {t}',
+  'details.achUnavailable': 'Данные о достижениях недоступны (нет достижений, не запускалась или приватный профиль).',
+  'details.metacritic': 'Metacritic',
+  'details.comingSoon': 'Скоро выйдет',
+
+  'sidebar.stats': 'Статистика',
+  'stats.title': 'Статистика',
+  'stats.games': 'Игр',
+  'stats.hours': 'Всего часов',
+  'stats.played': 'Запускалось хоть раз',
+  'stats.topByPlaytime': 'Топ по времени',
+  'stats.recent2w': 'За 2 недели (Steam)',
+  'stats.noData': 'Данных пока нет — синхронизируйте библиотеки в настройках.',
+  'stats.noPlaytime': 'Нет данных о времени для выбранных платформ.',
+  'store.searchPlaceholder': 'Поиск по магазину Steam…',
+  'store.results': 'Результаты поиска',
+  'store.noResults': 'Ничего не найдено.',
+  'store.free': 'Бесплатно',
+  'store.inLib.steam': 'Уже в вашей библиотеке Steam',
+  'store.inLib.epic': 'Уже в вашей библиотеке EGS',
+  'store.needSteam': 'Укажите SteamID в настройках, чтобы загрузить вишлист.',
+  'store.wl.empty': 'Вишлист пуст или профиль приватный.',
+  'store.wl.sort': 'Сортировка',
+  'store.wl.sort.rank': 'Ваш порядок',
+  'store.wl.sort.date': 'Дата добавления',
+  'store.wl.sort.name': 'Название',
+  'store.wl.sort.price': 'Цена',
+  'store.wl.sort.discount': 'Скидка',
+  'store.wl.discountOnly': 'Только со скидкой',
+  'store.wl.filter': 'Фильтр по названию…',
+
+  'card.noImage': 'нет изображения',
+  'card.hours': 'ч',
+  'store.choose': 'Открыть в…',
+  'card.play': 'Играть',
+  'card.install': 'Установить',
+  'card.uninstall': 'Удалить',
+  'card.cancel': 'Отмена',
+  'card.store': 'Страница в магазине',
+
+  'nav.library': '← Библиотека',
+  'nav.downloads': '⬇ Загрузки',
+  'downloads.title': 'Загрузки',
+  'downloads.empty': 'Нет активных или недавних загрузок.',
+  'downloads.done': 'Установлено',
+  'downloads.error': 'Ошибка',
+
+  'epic.embeddedLogin': 'Войти в Epic (в приложении)',
+  'epic.embeddedDesc':
+    'Откроет вход Epic внутри лаунчера, затем авторизует загрузки (legendary) и синхронизирует библиотеку.',
+  'epic.legendaryMissing':
+    'legendary не найден. Загрузки EGS отключены — выполните «npm run fetch:legendary».',
+
+  'settings.steam': 'Steam',
+  'settings.epic': 'Epic Games Store',
+  'settings.account.steam': 'Steam',
+  'settings.account.epic': 'Epic Games',
+  'settings.notConfigured': '— не настроен',
+  'settings.notConnected': '— не подключён',
+  'settings.connected': 'подключён',
+  'settings.syncSteam': 'Синхронизировать Steam',
+  'settings.syncEpic': 'Синхронизировать EGS',
+  'settings.syncing': 'Синхронизация…',
+  'settings.syncDone': 'Синхронизация ({what}) завершена.',
+
+  'steam.help': 'Ключ берётся на',
+  'steam.publicProfile': '. Профиль должен быть публичным.',
+  'steam.apiKey': 'Steam API key',
+  'steam.steamId': 'SteamID64',
+  'steam.save': 'Сохранить и проверить',
+  'steam.saved': 'Сохранено',
+
+  'epic.variantAuto': 'Вариант А — автоматически:',
+  'epic.autoDesc':
+    'если на этом ПК установлен и залогинен Epic Games Launcher (работает только когда бэкенд запущен на хосте, не в контейнере).',
+  'epic.importLauncher': 'Импортировать из лаунчера',
+  'epic.variantManual': 'Вариант B — вручную:',
+  'epic.manualDesc': 'откройте вход Epic, войдите, скопируйте {code} из JSON и вставьте сюда.',
+  'epic.openLogin': '1. Открыть страницу входа Epic ↗',
+  'epic.pasteCode': '2. Вставьте authorizationCode',
+  'epic.connect': '3. Подключить',
+  'epic.connectedAs': 'Подключено{name}. Игр EGS: {count}.',
+  'epic.requiresLogin': 'Требуется вход.',
+
+  'common.error': 'Ошибка',
+
+  'ws.title': 'Рабочее пространство',
+  'ws.desc':
+    'Секретный токен вашего пространства. Сохраните его, чтобы открыть библиотеку на другом устройстве или после очистки данных браузера. Любой, у кого есть токен, видит вашу библиотеку — держите его в секрете.',
+  'ws.show': 'Показать токен',
+  'ws.hide': 'Скрыть',
+  'ws.copy': 'Копировать',
+  'ws.copied': 'Скопировано!',
+  'ws.useExisting': 'Вставьте существующий токен, чтобы переключить пространство',
+  'ws.apply': 'Переключить',
+};
+
+const dicts: Record<Lang, Dict> = { en, ru };
+
+interface I18nContextValue {
+  lang: Lang;
+  setLang: (l: Lang) => void;
+  t: (key: keyof typeof en, vars?: Record<string, string | number>) => string;
+}
+
+const I18nContext = createContext<I18nContextValue | undefined>(undefined);
+
+export const I18nProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [lang, setLangState] = useState<Lang>(() => {
+    const saved = localStorage.getItem('lang');
+    return saved === 'ru' ? 'ru' : 'en'; // default — EN
+  });
+
+  useEffect(() => {
+    localStorage.setItem('lang', lang);
+    document.documentElement.setAttribute('lang', lang);
+  }, [lang]);
+
+  const setLang = useCallback((l: Lang) => setLangState(l), []);
+
+  const t = useCallback(
+    (key: string, vars?: Record<string, string | number>) => {
+      let str = dicts[lang][key] ?? dicts.en[key] ?? key;
+      if (vars)
+        for (const [k, v] of Object.entries(vars))
+          str = str.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v));
+      return str;
+    },
+    [lang]
+  );
+
+  return <I18nContext.Provider value={{ lang, setLang, t }}>{children}</I18nContext.Provider>;
+};
+
+export const useI18n = (): I18nContextValue => {
+  const ctx = useContext(I18nContext);
+  if (!ctx) throw new Error('useI18n must be used within I18nProvider');
+  return ctx;
+};

@@ -9,8 +9,8 @@ public interface IGameWriter
 {
     Task UpsertAsync(
         GameSource source, string externalId, string title,
-        string? iconUrl, string? storeUrl, int? playtimeMinutes, string? ns, DateTime? acquisitionDate,
-        CancellationToken ct);
+        string? iconUrl, string? storeUrl, int? playtimeMinutes, string? ns, string? appName,
+        DateTime? acquisitionDate, CancellationToken ct);
 }
 
 /// <summary>
@@ -21,8 +21,8 @@ public class GameWriter(AppDbContext db, IWorkspaceContext workspace) : IGameWri
 {
     public async Task UpsertAsync(
         GameSource source, string externalId, string title,
-        string? iconUrl, string? storeUrl, int? playtimeMinutes, string? ns, DateTime? acquisitionDate,
-        CancellationToken ct)
+        string? iconUrl, string? storeUrl, int? playtimeMinutes, string? ns, string? appName,
+        DateTime? acquisitionDate, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(externalId) || string.IsNullOrWhiteSpace(title))
             return;
@@ -56,8 +56,11 @@ public class GameWriter(AppDbContext db, IWorkspaceContext workspace) : IGameWri
 
         entry.IconUrl = iconUrl;
         entry.StoreUrl = storeUrl;
-        entry.PlaytimeMinutes = playtimeMinutes;
+        // Playtime is best-effort (e.g. the EGS playtime endpoint can fail
+        // independently of the library) — never erase a known value with null.
+        entry.PlaytimeMinutes = playtimeMinutes ?? entry.PlaytimeMinutes;
         entry.Namespace = ns;
+        entry.AppName = appName;
         entry.AcquisitionDate = acquisitionDate;
         entry.UpdatedAt = now;
     }

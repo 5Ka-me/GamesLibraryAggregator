@@ -1,7 +1,6 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
-import { ThemeProvider } from './theme/ThemeContext';
-import { I18nProvider } from './i18n/I18nContext';
+import { ThemeProvider, I18nProvider } from '@app/shared';
 import LibraryPage from './pages/LibraryPage';
 import SettingsPage from './pages/SettingsPage';
 

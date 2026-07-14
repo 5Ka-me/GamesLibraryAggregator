@@ -149,7 +149,7 @@ public class EpicGamesService(
 
         var session = await db.EpicSessions.AsNoTracking()
             .FirstOrDefaultAsync(s => s.WorkspaceId == workspace.WorkspaceId, ct);
-        var count = await FetchAndStoreLibraryAsync(accessToken, ct);
+        var count = await FetchAndStoreLibraryAsync(accessToken, session?.AccountId, ct);
         return new EpicAuthResultModel
         {
             Success = true,
@@ -166,13 +166,30 @@ public class EpicGamesService(
         return new EpicAccountDto
         {
             Connected = connected,
-            DisplayName = session?.DisplayName
+            DisplayName = session?.DisplayName,
+            Country = session?.Country
+        };
+    }
+
+    public async Task<EpicAccountDto> SetRegionAsync(string country, CancellationToken ct)
+    {
+        var normalized = SteamService.NormalizeCountry(country);
+        var session = await db.EpicSessions.FirstOrDefaultAsync(s => s.WorkspaceId == workspace.WorkspaceId, ct)
+                      ?? throw new InvalidOperationException("Sign in to Epic first.");
+        session.Country = normalized;
+        session.UpdatedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync(ct);
+        return new EpicAccountDto
+        {
+            Connected = session.RefreshExpiresAt > DateTime.UtcNow,
+            DisplayName = session.DisplayName,
+            Country = session.Country
         };
     }
 
     private async Task<EpicAuthResultModel> SyncWithTokenAsync(EpicAuthResponseModel token, CancellationToken ct)
     {
-        var count = await FetchAndStoreLibraryAsync(token.AccessToken, ct);
+        var count = await FetchAndStoreLibraryAsync(token.AccessToken, token.AccountId, ct);
         return new EpicAuthResultModel
         {
             Success = true,
@@ -253,22 +270,58 @@ public class EpicGamesService(
         session.RefreshExpiresAt = (token.RefreshExpiresAt ?? now.AddSeconds(token.RefreshExpires)).ToUniversalTime();
         session.UpdatedAt = now;
 
+        // Account country → regional storefront prices. Detection only fills a
+        // blank value; a manual override from the settings page is never touched.
+        if (string.IsNullOrEmpty(session.Country))
+            session.Country = await FetchAccountCountryAsync(token.AccessToken, token.AccountId, ct);
+
         if (session.Id == 0) db.EpicSessions.Add(session);
         await db.SaveChangesAsync(ct);
     }
 
+    /// <summary>Account country from Epic's account service (best effort).</summary>
+    private async Task<string?> FetchAccountCountryAsync(string accessToken, string accountId, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(accountId)) return null;
+        try
+        {
+            var client = httpClientFactory.CreateClient("epic");
+            using var request = new HttpRequestMessage(
+                HttpMethod.Get,
+                $"https://account-public-service-prod03.ol.epicgames.com/account/api/public/account/{accountId}");
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
+            using var response = await client.SendAsync(request, ct);
+            if (!response.IsSuccessStatusCode) return null;
+
+            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+            return doc.RootElement.TryGetProperty("country", out var c) ? c.GetString() : null;
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "EGS: failed to fetch the account country");
+            return null;
+        }
+    }
+
     // ===================== Library + catalog =====================
 
-    private async Task<int> FetchAndStoreLibraryAsync(string accessToken, CancellationToken ct)
+    private async Task<int> FetchAndStoreLibraryAsync(string accessToken, string? accountId, CancellationToken ct)
     {
         var rawItems = await FetchRawLibraryAsync(accessToken, ct);
         logger.LogInformation("EGS: library records received — {Count}", rawItems.Count);
+
+        // Per-game playtime (artifactId → minutes) from Epic's launcher API.
+        var playtime = await FetchPlaytimeAsync(accessToken, accountId, ct);
+        logger.LogInformation("EGS: playtime records received — {Count} (accountId set: {HasAccount})",
+            playtime.Count, !string.IsNullOrEmpty(accountId));
 
         var client = httpClientFactory.CreateClient("epic");
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
 
         var count = 0;
         var seen = new HashSet<string>();
+        var kept = new HashSet<string>(); // catalogItemIds that belong to the library after filtering
 
         foreach (var item in rawItems)
         {
@@ -286,12 +339,29 @@ public class EpicGamesService(
                         string.Equals(c.Path, "mods", StringComparison.OrdinalIgnoreCase)))
                     continue;
 
+                // Games only: UE-marketplace/Fab assets, plugins etc. live in their
+                // own namespaces (the "ue" check above doesn't catch them) but never
+                // carry the "games" category — the same criterion legendary uses.
+                var isGame = details.Categories.Any(c =>
+                    string.Equals(c.Path, "games", StringComparison.OrdinalIgnoreCase) ||
+                    c.Path.StartsWith("games/", StringComparison.OrdinalIgnoreCase));
+                if (!isGame)
+                {
+                    logger.LogDebug("EGS: skipping non-game {Title} [{Categories}]",
+                        details.Title, string.Join(",", details.Categories.Select(c => c.Path)));
+                    continue;
+                }
+
                 // The store page link is resolved lazily on click (see GetStoreUrlAsync),
                 // to avoid hitting Cloudflare with a burst of hundreds of requests.
+                int? minutes = item.AppName != null && playtime.TryGetValue(item.AppName, out var m)
+                    ? m
+                    : null;
                 await gameWriter.UpsertAsync(
                     GameSource.Epic, details.CatalogItemId, details.Title,
-                    details.ImageUrl, storeUrl: null, playtimeMinutes: null,
-                    details.Namespace, details.AcquisitionDate, ct);
+                    details.ImageUrl, storeUrl: null, playtimeMinutes: minutes,
+                    details.Namespace, item.AppName, details.AcquisitionDate, ct);
+                kept.Add(details.CatalogItemId);
                 count++;
             }
             catch (Exception ex)
@@ -301,8 +371,80 @@ public class EpicGamesService(
         }
 
         await db.SaveChangesAsync(ct);
+
+        // Prune Epic entries that are no longer part of the (filtered) library:
+        // previously synced UE assets, refunded games, etc. Only when the sync
+        // actually returned data — an empty response must not wipe the library.
+        if (rawItems.Count > 0)
+        {
+            var ws = workspace.WorkspaceId;
+            var stale = await db.GameEntries
+                .Where(e => e.Source == GameSource.Epic && e.Game.WorkspaceId == ws
+                            && !kept.Contains(e.ExternalId))
+                .ToListAsync(ct);
+            if (stale.Count > 0)
+            {
+                db.GameEntries.RemoveRange(stale);
+                await db.SaveChangesAsync(ct);
+            }
+
+            var emptyGames = await db.Games
+                .Where(g => g.WorkspaceId == ws && !g.Entries.Any())
+                .ToListAsync(ct);
+            if (emptyGames.Count > 0)
+            {
+                db.Games.RemoveRange(emptyGames);
+                await db.SaveChangesAsync(ct);
+            }
+
+            if (stale.Count > 0 || emptyGames.Count > 0)
+                logger.LogInformation("EGS: pruned {Entries} stale entries, {Games} empty games",
+                    stale.Count, emptyGames.Count);
+        }
+
         logger.LogInformation("EGS: games stored — {Count}", count);
         return count;
+    }
+
+    /// <summary>
+    /// Per-game playtime from Epic's launcher API (the same one the Epic
+    /// launcher and legendary use). Returns artifactId (appName) → minutes;
+    /// empty on any failure — playtime is a nice-to-have, not a sync blocker.
+    /// </summary>
+    private async Task<Dictionary<string, int>> FetchPlaytimeAsync(
+        string accessToken, string? accountId, CancellationToken ct)
+    {
+        var result = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrEmpty(accountId)) return result;
+
+        try
+        {
+            var client = httpClientFactory.CreateClient("epic");
+            using var request = new HttpRequestMessage(
+                HttpMethod.Get,
+                $"https://{options.LibraryHost}/library/api/public/playtime/account/{accountId}/all");
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
+            using var response = await client.SendAsync(request, ct);
+            if (!response.IsSuccessStatusCode) return result;
+
+            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+            if (doc.RootElement.ValueKind != JsonValueKind.Array) return result;
+
+            foreach (var row in doc.RootElement.EnumerateArray())
+            {
+                var artifact = row.TryGetProperty("artifactId", out var a) ? a.GetString() : null;
+                if (string.IsNullOrEmpty(artifact)) continue;
+                // totalTime is reported in seconds.
+                var seconds = row.TryGetProperty("totalTime", out var tt) ? tt.GetInt64() : 0;
+                if (seconds > 0) result[artifact] = (int)(seconds / 60);
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "EGS: failed to fetch playtime");
+        }
+        return result;
     }
 
     private async Task<List<LibraryItemModel>> FetchRawLibraryAsync(string token, CancellationToken ct)

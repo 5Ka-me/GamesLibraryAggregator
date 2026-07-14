@@ -37,10 +37,12 @@ services:
         condition: service_healthy
 
   # Frontend (React, built and served via nginx).
+  # Context is the REPO ROOT: the web app consumes the @app/shared workspace
+  # package from packages/, which lives outside steam-egs-aggregator/.
   frontend:
     build:
-      context: ../steam-egs-aggregator
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: steam-egs-aggregator/Dockerfile
       args:
         # The user's browser calls the backend at this address (the port published by the api service).
         REACT_APP_API_URL: ${REACT_APP_API_URL:-http://localhost:8080}

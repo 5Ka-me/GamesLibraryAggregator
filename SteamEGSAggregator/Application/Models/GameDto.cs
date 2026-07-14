@@ -11,6 +11,12 @@ public class GameEntryDto
     public string? Namespace { get; set; }
     public int? PlaytimeMinutes { get; set; }
     public DateTime? AcquisitionDate { get; set; }
+
+    /// <summary>Protocol deep-link to launch the game via its native client.</summary>
+    public string? LaunchUrl { get; set; }
+
+    /// <summary>Protocol deep-link to install/download the game via its native client.</summary>
+    public string? InstallUrl { get; set; }
 }
 
 /// <summary>A merged game: one or more sources (tags).</summary>
@@ -38,7 +44,9 @@ public class GameDto
                 StoreUrl = e.StoreUrl,
                 Namespace = e.Namespace,
                 PlaytimeMinutes = e.PlaytimeMinutes,
-                AcquisitionDate = e.AcquisitionDate
+                AcquisitionDate = e.AcquisitionDate,
+                LaunchUrl = BuildLaunchUrl(e),
+                InstallUrl = BuildInstallUrl(e)
             })
             .ToList();
 
@@ -50,4 +58,24 @@ public class GameDto
             Entries = entries
         };
     }
+
+    // Native-client deep links (handled by the OS protocol handler when Steam/EGS is installed).
+    private static string? BuildLaunchUrl(GameEntry e) => e.Source switch
+    {
+        GameSource.Steam => $"steam://rungameid/{e.ExternalId}",
+        GameSource.Epic => EpicAppsUri(e, "launch&silent=true"),
+        _ => null
+    };
+
+    private static string? BuildInstallUrl(GameEntry e) => e.Source switch
+    {
+        GameSource.Steam => $"steam://install/{e.ExternalId}",
+        GameSource.Epic => EpicAppsUri(e, "install"),
+        _ => null
+    };
+
+    private static string? EpicAppsUri(GameEntry e, string action) =>
+        string.IsNullOrEmpty(e.Namespace) || string.IsNullOrEmpty(e.AppName)
+            ? null
+            : $"com.epicgames.launcher://apps/{e.Namespace}%3A{e.ExternalId}%3A{e.AppName}?action={action}";
 }

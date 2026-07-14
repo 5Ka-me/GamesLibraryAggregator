@@ -1,0 +1,18 @@
+# Applies to builds whose context is the repo root (the frontend image).
+# Keeps the context small: no node_modules, build outputs, .NET tree or git.
+
+**/node_modules
+**/build
+**/dist
+**/out
+**/coverage
+.git
+.claude
+
+# .NET backend has its own build context (SteamEGSAggregator/) and .dockerignore.
+SteamEGSAggregator
+
+# The Electron launcher isn't built in Docker — only its package.json is needed
+# so npm can resolve the workspace list.
+steam-egs-launcher/*
+!steam-egs-launcher/package.json

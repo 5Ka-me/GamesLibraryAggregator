@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
-import { workspace } from '../api/client';
-import { useI18n } from '../i18n/I18nContext';
+import { workspace, useI18n } from '@app/shared';
 
 const btn: React.CSSProperties = {
   padding: '8px 14px',

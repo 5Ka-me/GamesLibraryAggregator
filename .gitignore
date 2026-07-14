@@ -19,6 +19,18 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+# ===== Monorepo build outputs =====
+packages/shared/dist/
+steam-egs-launcher/out/
+steam-egs-launcher/dist/
+
+# Bundled native binaries (e.g. legendary.exe) — keep out of git, but track the
+# README. The dir itself must be re-included first: the .NET `**/bin/` rule
+# above excludes it, and git can't re-include files inside an excluded dir.
+!steam-egs-launcher/resources/bin/
+steam-egs-launcher/resources/bin/*
+!steam-egs-launcher/resources/bin/README.md
+
 # ===== IDE / OS =====
 .idea/
 .vscode/

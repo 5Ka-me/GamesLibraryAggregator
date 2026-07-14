@@ -12,5 +12,14 @@ namespace Application.Interfaces
 
         /// <summary>Save the key/SteamId, validate them and fetch the persona name.</summary>
         Task<SteamAccountDto> SaveCredentialsAsync(SteamCredentialsRequest request, CancellationToken ct);
+
+        /// <summary>Override the store region (ISO alpha-2) used for prices.</summary>
+        Task<SteamAccountDto> SetRegionAsync(string country, CancellationToken ct);
+
+        /// <summary>Games played in the last 2 weeks.</summary>
+        Task<List<SteamRecentGameDto>> GetRecentGamesAsync(CancellationToken ct);
+
+        /// <summary>Player achievements for a game, merged with the schema and global unlock rates.</summary>
+        Task<SteamGameAchievementsDto> GetAchievementsAsync(int appId, string? lang, CancellationToken ct);
     }
 }

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { api, EpicAuthResult } from '../api/client';
 import { useI18n } from '../i18n/I18nContext';
+import { openExternal } from '../platform';
 
 const btn: React.CSSProperties = {
   padding: '8px 14px',
@@ -43,7 +44,7 @@ const EpicPanel: React.FC<{ onChanged?: () => void }> = ({ onChanged }) => {
   const openLogin = async () => {
     try {
       const { loginUrl } = await api.getEpicLoginUrl();
-      window.open(loginUrl, '_blank', 'noopener');
+      openExternal(loginUrl);
     } catch (e) {
       setStatus(`${t('common.error')}: ${e instanceof Error ? e.message : String(e)}`);
     }

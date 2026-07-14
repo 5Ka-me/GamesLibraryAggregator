@@ -24,6 +24,9 @@ public class GameEntry
     /// <summary>EGS namespace.</summary>
     public string? Namespace { get; set; }
 
+    /// <summary>EGS artifact id (appName) — needed to build the launcher deep-link.</summary>
+    public string? AppName { get; set; }
+
     public DateTime? AcquisitionDate { get; set; }
 
     public DateTime UpdatedAt { get; set; }

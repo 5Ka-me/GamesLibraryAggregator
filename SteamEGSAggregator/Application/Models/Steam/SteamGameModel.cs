@@ -13,6 +13,10 @@ namespace SteamEGSAggregator.Application.Models.Steam
         [JsonPropertyName("playtime_forever")]
         public int PlaytimeForever { get; set; }
 
+        /// <summary>Present in GetRecentlyPlayedGames responses.</summary>
+        [JsonPropertyName("playtime_2weeks")]
+        public int? Playtime2Weeks { get; set; }
+
         [JsonPropertyName("img_icon_url")]
         public string? ImgIconUrl { get; set; }
 
