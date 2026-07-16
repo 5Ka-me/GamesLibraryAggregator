@@ -75,6 +75,7 @@ const en: Dict = {
   'details.achievements': 'Achievements',
   'details.achProgress': '{u} of {t} unlocked',
   'details.achUnavailable': 'Achievement data unavailable (no achievements, not played, or private profile).',
+  'details.hiddenAch': 'Hidden achievement — click to reveal',
   'details.metacritic': 'Metacritic',
   'details.comingSoon': 'Coming soon',
 
@@ -103,6 +104,16 @@ const en: Dict = {
   'store.wl.sort.discount': 'Discount',
   'store.wl.discountOnly': 'On sale only',
   'store.wl.filter': 'Filter by name…',
+  'store.personal.discovery': 'Your Discovery Queue',
+  'store.personal.becauseTag': 'Because you like {tag}',
+  'store.personal.becausePlayed': 'Because you played {game}',
+
+  'store.sort.default': 'Default',
+  'store.sort.priceAsc': 'Price: low → high',
+  'store.sort.priceDesc': 'Price: high → low',
+  'store.sort.release': 'Release date',
+  'store.sort.reviews': 'Reviews',
+  'store.sort.name': 'Name',
 
   'card.noImage': 'no image',
   'card.hours': 'h',
@@ -144,6 +155,14 @@ const en: Dict = {
   'steam.steamId': 'SteamID64',
   'steam.save': 'Save & verify',
   'steam.saved': 'Saved',
+  'steam.webLogin': 'Sign in through Steam',
+  'steam.webLoginDesc':
+    'Opens Steam’s official sign-in inside the app (password & Steam Guard stay with Valve — never seen by this app). No API key needed; works for private profiles.',
+  'steam.remember': 'Keep me signed in on this device',
+  'steam.signOut': 'Sign out',
+  'steam.signedInAs': 'Signed in as {name}. Steam games: {count}.',
+  'steam.signedOut': 'Signed out of Steam.',
+  'steam.advanced': 'Advanced: sign in with an API key instead',
 
   'epic.variantAuto': 'Option A — automatic:',
   'epic.autoDesc':
@@ -241,6 +260,7 @@ const ru: Dict = {
   'details.achievements': 'Достижения',
   'details.achProgress': 'Открыто {u} из {t}',
   'details.achUnavailable': 'Данные о достижениях недоступны (нет достижений, не запускалась или приватный профиль).',
+  'details.hiddenAch': 'Скрытое достижение — нажмите, чтобы раскрыть',
   'details.metacritic': 'Metacritic',
   'details.comingSoon': 'Скоро выйдет',
 
@@ -269,6 +289,16 @@ const ru: Dict = {
   'store.wl.sort.discount': 'Скидка',
   'store.wl.discountOnly': 'Только со скидкой',
   'store.wl.filter': 'Фильтр по названию…',
+  'store.personal.discovery': 'Ваша очередь исследования',
+  'store.personal.becauseTag': 'Потому что вам нравится: {tag}',
+  'store.personal.becausePlayed': 'Потому что вы играли в {game}',
+
+  'store.sort.default': 'По умолчанию',
+  'store.sort.priceAsc': 'Цена: по возрастанию',
+  'store.sort.priceDesc': 'Цена: по убыванию',
+  'store.sort.release': 'Дата выхода',
+  'store.sort.reviews': 'Отзывы',
+  'store.sort.name': 'Название',
 
   'card.noImage': 'нет изображения',
   'card.hours': 'ч',
@@ -310,6 +340,14 @@ const ru: Dict = {
   'steam.steamId': 'SteamID64',
   'steam.save': 'Сохранить и проверить',
   'steam.saved': 'Сохранено',
+  'steam.webLogin': 'Войти через Steam',
+  'steam.webLoginDesc':
+    'Откроет официальный вход Steam внутри приложения (пароль и Steam Guard остаются у Valve — приложение их не видит). API-ключ не нужен; работает и с приватным профилем.',
+  'steam.remember': 'Оставаться в системе на этом устройстве',
+  'steam.signOut': 'Выйти',
+  'steam.signedInAs': 'Вход выполнен: {name}. Игр Steam: {count}.',
+  'steam.signedOut': 'Выход из Steam выполнен.',
+  'steam.advanced': 'Дополнительно: вход по API-ключу',
 
   'epic.variantAuto': 'Вариант А — автоматически:',
   'epic.autoDesc':

@@ -16,6 +16,12 @@ namespace Application.Interfaces
         /// <summary>Override the store region (ISO alpha-2) used for prices.</summary>
         Task<SteamAccountDto> SetRegionAsync(string country, CancellationToken ct);
 
+        /// <summary>
+        /// Store a library the launcher fetched itself after a Steam web sign-in
+        /// (no API key on the server). Returns the account state.
+        /// </summary>
+        Task<SteamAccountDto> SaveExternalLibraryAsync(SteamExternalSyncRequest request, CancellationToken ct);
+
         /// <summary>Games played in the last 2 weeks.</summary>
         Task<List<SteamRecentGameDto>> GetRecentGamesAsync(CancellationToken ct);
 

@@ -11,11 +11,25 @@ export interface ApiRequestInit {
   headers?: Record<string, string>;
 }
 
+/** Network-level failures get an actionable message instead of "fetch failed". */
+function unreachable(base: string): Error {
+  return new Error(
+    `Backend API is unreachable at ${base}. Make sure the .NET API is running ` +
+      `and the "Backend URL" in Settings points to it.`
+  );
+}
+
 async function ensureToken(): Promise<string> {
   const existing = getToken();
   if (existing) return existing;
 
-  const res = await fetch(`${getApiBase()}/api/workspace`, { method: 'POST' });
+  const base = getApiBase();
+  let res: Response;
+  try {
+    res = await fetch(`${base}/api/workspace`, { method: 'POST' });
+  } catch {
+    throw unreachable(base);
+  }
   if (!res.ok) throw new Error(`workspace create failed: ${res.status}`);
   const data = (await res.json()) as { token: string };
   setToken(data.token);
@@ -41,11 +55,17 @@ export async function apiFetch<T = unknown>(path: string, init: ApiRequestInit =
     const headers = new Headers(init.headers);
     headers.set('X-Workspace-Token', token);
 
-    const res = await fetch(`${getApiBase()}${path}`, {
-      method: init.method,
-      body: init.body,
-      headers,
-    });
+    const base = getApiBase();
+    let res: Response;
+    try {
+      res = await fetch(`${base}${path}`, {
+        method: init.method,
+        body: init.body,
+        headers,
+      });
+    } catch {
+      throw unreachable(base);
+    }
     if (res.status === 401 && retry) {
       clearToken();
       return run(false);

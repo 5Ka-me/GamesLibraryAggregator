@@ -30,6 +30,12 @@ public class SteamController(ISteamService steam) : ControllerBase
         [FromBody] RegionRequest request, CancellationToken ct)
         => Ok(await steam.SetRegionAsync(request.Country, ct));
 
+    /// <summary>Store a library synced by the launcher after a Steam web sign-in (no API key).</summary>
+    [HttpPost("sync-games")]
+    public async Task<ActionResult<SteamAccountDto>> SyncGames(
+        [FromBody] SteamExternalSyncRequest request, CancellationToken ct)
+        => Ok(await steam.SaveExternalLibraryAsync(request, ct));
+
     /// <summary>Games played in the last 2 weeks.</summary>
     [HttpGet("recent")]
     public async Task<ActionResult<List<SteamRecentGameDto>>> Recent(CancellationToken ct)

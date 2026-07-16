@@ -271,6 +271,12 @@ const SettingsPage: React.FC = () => {
   const [epic, setEpic] = useState<EpicAccount | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [rememberSteam, setRememberSteam] = useState(true);
+  const [steamLoggedIn, setSteamLoggedIn] = useState(false);
+
+  useEffect(() => {
+    window.launcher.steamStatus().then((s) => setSteamLoggedIn(s.loggedIn));
+  }, []);
 
   const loadAccounts = useCallback(async () => {
     const [s, e] = await Promise.all([
@@ -297,6 +303,31 @@ const SettingsPage: React.FC = () => {
     } finally {
       setBusy(null);
     }
+  };
+
+  const steamWebLogin = async () => {
+    setBusy('steamLogin');
+    setMsg(null);
+    try {
+      const r = await window.launcher.steamLogin(rememberSteam);
+      if (r.success) {
+        setMsg(`✅ ${t('steam.signedInAs', { name: r.personaName ?? r.steamId ?? '', count: r.gameCount ?? 0 })}`);
+        setSteamLoggedIn(true);
+        await loadAccounts();
+      } else {
+        setMsg(`⚠️ ${r.message ?? t('common.error')}`);
+      }
+    } catch (e) {
+      setMsg(`${t('common.error')}: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const steamWebLogout = async () => {
+    await window.launcher.steamLogout();
+    setSteamLoggedIn(false);
+    setMsg(`✅ ${t('steam.signedOut')}`);
   };
 
   const embeddedEpicLogin = async () => {
@@ -347,12 +378,40 @@ const SettingsPage: React.FC = () => {
 
       <div style={card}>
         <h3 style={{ marginTop: 0 }}>{t('settings.steam')}</h3>
-        <SteamPanel initialSteamId={steam?.steamId} onChanged={loadAccounts} />
-        <div style={{ marginTop: 14 }}>
-          <button style={syncBtn} disabled={busy !== null} onClick={() => doSync('steam', api.syncSteam)}>
-            {busy === 'steam' ? t('settings.syncing') : t('settings.syncSteam')}
+
+        {/* Preferred: secure web sign-in — no API key, works for private profiles. */}
+        <button style={syncBtn} disabled={busy !== null} onClick={steamWebLogin}>
+          {busy === 'steamLogin' ? t('settings.syncing') : t('steam.webLogin')}
+        </button>
+        {steamLoggedIn && (
+          <button style={{ ...btn, marginLeft: 8 }} disabled={busy !== null} onClick={steamWebLogout}>
+            {t('steam.signOut')}
           </button>
-        </div>
+        )}
+        <label
+          style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 10, fontSize: 13, cursor: 'pointer' }}
+        >
+          <input
+            type="checkbox"
+            checked={rememberSteam}
+            onChange={(e) => setRememberSteam(e.target.checked)}
+          />
+          {t('steam.remember')}
+        </label>
+        <p style={{ margin: '8px 0 0', color: 'var(--muted)', fontSize: 13 }}>{t('steam.webLoginDesc')}</p>
+
+        {/* Fallback: manual API key + SteamID (also the path for the web app). */}
+        <details style={{ marginTop: 14 }}>
+          <summary style={{ cursor: 'pointer', color: 'var(--muted)' }}>{t('steam.advanced')}</summary>
+          <div style={{ marginTop: 10 }}>
+            <SteamPanel initialSteamId={steam?.steamId} onChanged={loadAccounts} />
+            <div style={{ marginTop: 14 }}>
+              <button style={syncBtn} disabled={busy !== null} onClick={() => doSync('steam', api.syncSteam)}>
+                {busy === 'steam' ? t('settings.syncing') : t('settings.syncSteam')}
+              </button>
+            </div>
+          </div>
+        </details>
       </div>
 
       <div style={card}>

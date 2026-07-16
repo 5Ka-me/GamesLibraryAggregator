@@ -2,14 +2,19 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type { ApiRequestInit } from '../main/services/apiClient';
 import type { InstalledGame } from '../main/services/legendary';
 import type { EpicAuthResult } from '../main/services/epicAuth';
+import type { SteamLoginResult } from '../main/services/steamAuth';
 import type {
   GameDetails,
+  SectionSort,
   StoreHome,
   StoreItem,
+  StoreSection,
   StoreSectionPage,
   WishlistEntry,
   WishlistItem,
 } from '../main/services/steamStore';
+
+export type { SectionSort, StoreSection };
 import type { EpicDetails } from '../main/services/epicStore';
 
 export type { EpicDetails, GameDetails, StoreHome, StoreItem, StoreSectionPage, WishlistEntry, WishlistItem };
@@ -64,10 +69,18 @@ const launcher = {
     ipcRenderer.invoke('store:wishlist', steamId, force),
   storeItemsMeta: (appids: number[], lang: string): Promise<Record<number, StoreItem>> =>
     ipcRenderer.invoke('store:itemsMeta', appids, lang),
-  storeSection: (id: string, lang: string, start: number, count: number): Promise<StoreSectionPage> =>
-    ipcRenderer.invoke('store:section', id, lang, start, count),
+  storeSection: (
+    id: string,
+    lang: string,
+    start: number,
+    count: number,
+    sort?: SectionSort
+  ): Promise<StoreSectionPage> => ipcRenderer.invoke('store:section', id, lang, start, count, sort),
   storeAppDetails: (appid: number, lang: string): Promise<GameDetails> =>
     ipcRenderer.invoke('store:appDetails', appid, lang),
+  /** Personalized rows (Discovery Queue etc.); [] when not signed in to Steam. */
+  storePersonal: (lang: string, force?: boolean): Promise<StoreSection[]> =>
+    ipcRenderer.invoke('store:personal', lang, force),
   /** Epic offer details by namespace (library) or title search; null if not on EGS. */
   epicStoreDetails: (title: string, ns: string | null, lang: string): Promise<EpicDetails | null> =>
     ipcRenderer.invoke('epic:storeDetails', title, ns, lang),
@@ -79,6 +92,13 @@ const launcher = {
 
   /** Units of `currency` per 1 USD (daily rate), or null when unavailable. */
   fxUsdRate: (currency: string): Promise<number | null> => ipcRenderer.invoke('fx:usdRate', currency),
+
+  // Steam web sign-in (no API key). remember → persisted session.
+  steamLogin: (remember: boolean): Promise<SteamLoginResult> =>
+    ipcRenderer.invoke('steam:login', remember),
+  steamStatus: (): Promise<{ loggedIn: boolean; steamId?: string }> =>
+    ipcRenderer.invoke('steam:status'),
+  steamLogout: (): Promise<void> => ipcRenderer.invoke('steam:logout'),
 
   // EGS embedded OAuth (legendary auth + cloud library sync).
   epicLogin: (): Promise<EpicAuthResult> => ipcRenderer.invoke('epic:login'),

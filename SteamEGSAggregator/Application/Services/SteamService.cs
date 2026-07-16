@@ -119,6 +119,46 @@ public class SteamService(
         return c;
     }
 
+    public async Task<SteamAccountDto> SaveExternalLibraryAsync(
+        SteamExternalSyncRequest request, CancellationToken ct)
+    {
+        var steamId = request.SteamId?.Trim() ?? "";
+        if (string.IsNullOrEmpty(steamId))
+            throw new InvalidOperationException("SteamId is required.");
+
+        foreach (var g in request.Games)
+        {
+            var cover = $"https://cdn.cloudflare.steamstatic.com/steam/apps/{g.AppId}/library_600x900.jpg";
+            await gameWriter.UpsertAsync(
+                GameSource.Steam,
+                g.AppId.ToString(),
+                g.Name ?? $"App {g.AppId}",
+                cover,
+                storeUrl: $"https://store.steampowered.com/app/{g.AppId}",
+                g.PlaytimeForever,
+                ns: null, appName: null, acquisitionDate: null, ct);
+        }
+
+        // Persist the identity (no API key). Detection never clobbers a manual override.
+        var creds = await db.SteamCredentials.FirstOrDefaultAsync(c => c.WorkspaceId == workspace.WorkspaceId, ct)
+                    ?? new SteamCredentials { WorkspaceId = workspace.WorkspaceId };
+        creds.SteamId = steamId;
+        if (!string.IsNullOrEmpty(request.PersonaName)) creds.PersonaName = request.PersonaName;
+        // Auto-detected country from the profile — tolerate junk, keep any override.
+        if (string.IsNullOrEmpty(creds.Country) && request.Country?.Trim().Length == 2)
+            creds.Country = request.Country.Trim().ToUpperInvariant();
+        creds.UpdatedAt = DateTime.UtcNow;
+        if (creds.Id == 0) db.SteamCredentials.Add(creds);
+
+        await db.SaveChangesAsync(ct);
+        logger.LogInformation("Steam: external library synced — {Count} games", request.Games.Count);
+
+        return new SteamAccountDto
+        {
+            Configured = true, SteamId = steamId, PersonaName = creds.PersonaName, Country = creds.Country
+        };
+    }
+
     public async Task<List<SteamRecentGameDto>> GetRecentGamesAsync(CancellationToken ct)
     {
         var creds = await GetCredentialsAsync(ct);
@@ -176,7 +216,7 @@ public class SteamService(
         }
 
         // 2) Schema (names/descriptions/icons) + 3) global unlock rates — best effort.
-        var schema = new Dictionary<string, (string? name, string? desc, string? icon, string? gray)>(
+        var schema = new Dictionary<string, (string? name, string? desc, string? icon, string? gray, bool hidden)>(
             StringComparer.OrdinalIgnoreCase);
         try
         {
@@ -195,7 +235,8 @@ public class SteamService(
                         a.TryGetProperty("displayName", out var dn) ? dn.GetString() : null,
                         a.TryGetProperty("description", out var de) ? de.GetString() : null,
                         a.TryGetProperty("icon", out var ic) ? ic.GetString() : null,
-                        a.TryGetProperty("icongray", out var ig) ? ig.GetString() : null);
+                        a.TryGetProperty("icongray", out var ig) ? ig.GetString() : null,
+                        a.TryGetProperty("hidden", out var hd) && hd.GetInt32() == 1);
                 }
             }
         }
@@ -236,17 +277,23 @@ public class SteamService(
             var unlocked = a.TryGetProperty("achieved", out var ach) && ach.GetInt32() == 1;
             var unlockTs = a.TryGetProperty("unlocktime", out var ut) ? ut.GetInt64() : 0;
             var meta = schema.TryGetValue(apiName, out var s) ? s : default;
+            // The schema hides descriptions of hidden achievements; the player
+            // endpoint (with l=) often still returns them — use as a fallback so
+            // the "click to reveal" UI has something to show.
+            var playerDesc = a.TryGetProperty("description", out var pd) ? pd.GetString() : null;
+            var playerName = a.TryGetProperty("name", out var pn) ? pn.GetString() : null;
 
             result.Achievements.Add(new SteamAchievementDto
             {
                 Name = apiName,
-                DisplayName = meta.name ?? apiName,
-                Description = meta.desc,
+                DisplayName = meta.name ?? playerName ?? apiName,
+                Description = string.IsNullOrEmpty(meta.desc) ? playerDesc : meta.desc,
                 Icon = meta.icon,
                 IconGray = meta.gray,
                 Unlocked = unlocked,
                 UnlockTime = unlockTs > 0 ? DateTimeOffset.FromUnixTimeSeconds(unlockTs).UtcDateTime : null,
-                GlobalPct = globalPct.TryGetValue(apiName, out var pct) ? pct : null
+                GlobalPct = globalPct.TryGetValue(apiName, out var pct) ? pct : null,
+                Hidden = meta.hidden
             });
         }
 

@@ -29,3 +29,23 @@ public class SteamCredentialsRequest
     public string ApiKey { get; set; } = string.Empty;
     public string SteamId { get; set; } = string.Empty;
 }
+
+/// <summary>
+/// Library synced by the desktop launcher after a Steam web sign-in (no API key
+/// on the server). The launcher fetched the games with its own session token
+/// and hands the already-resolved list to the cloud DB.
+/// </summary>
+public class SteamExternalSyncRequest
+{
+    public string SteamId { get; set; } = string.Empty;
+    public string? PersonaName { get; set; }
+    public string? Country { get; set; }
+    public List<ExternalGameDto> Games { get; set; } = new();
+}
+
+public class ExternalGameDto
+{
+    public int AppId { get; set; }
+    public string? Name { get; set; }
+    public int PlaytimeForever { get; set; }
+}

@@ -42,6 +42,10 @@ export interface StoreItem {
   badge?: string;
   /** Render as a wide banner card instead of a capsule. */
   banner?: boolean;
+  /** Unreleased game — the UI shows the release date instead of a price. */
+  comingSoon?: boolean;
+  /** Steam release date (unix seconds), when known. */
+  releaseUnix?: number;
 }
 
 export interface StoreSection {
@@ -177,6 +181,18 @@ function assetImage(si: any): string | null {
 export const conventionCapsule = (appid: number): string =>
   `https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/capsule_231x87.jpg`;
 
+/** Server-side sort orders supported by Steam's search (honest across the whole section). */
+export type SectionSort = 'default' | 'price_asc' | 'price_desc' | 'release' | 'reviews' | 'name';
+
+const SORT_BY: Record<SectionSort, string | null> = {
+  default: null,
+  price_asc: 'Price_ASC',
+  price_desc: 'Price_DESC',
+  release: 'Released_DESC',
+  reviews: 'Reviews_DESC',
+  name: 'Name_ASC',
+};
+
 // ===================== Front page =====================
 
 export async function storeHome(lang: string, force = false): Promise<StoreHome> {
@@ -203,6 +219,34 @@ export async function storeHome(lang: string, force = false): Promise<StoreHome>
     const cat = cats?.[key2];
     if (cat?.items?.length) {
       sections.push({ id: key2, name: cat.name ?? key2, items: dedupeItems(cat.items.map(mapCapsule)) });
+    }
+  }
+
+  // featuredcategories reports unreleased games with final_price=0 (which
+  // mapCapsule reads as "Free") and carries no release dates — enrich the
+  // Coming Soon row from GetItems (real is_free + release date, cached).
+  const coming = sections.find((s) => s.id === 'coming_soon');
+  if (coming) {
+    try {
+      const meta = await itemsMeta(
+        coming.items.filter((i) => i.appid > 0).map((i) => i.appid),
+        lang
+      );
+      coming.items = coming.items.map((it) => {
+        const m = meta[it.appid];
+        return m
+          ? {
+              ...it,
+              price: m.price ?? null,
+              isFree: m.isFree ?? false,
+              comingSoon: m.comingSoon ?? true,
+              releaseUnix: m.releaseUnix,
+            }
+          : { ...it, price: null, isFree: false, comingSoon: true };
+      });
+    } catch {
+      // enrichment is best-effort — at least drop the bogus "Free" labels
+      coming.items = coming.items.map((it) => ({ ...it, price: null, isFree: false, comingSoon: true }));
     }
   }
 
@@ -434,7 +478,7 @@ export async function itemsMeta(
     const input = {
       ids: chunk.map((appid) => ({ appid })),
       context: { language: l, country_code: cc, steam_realm: 1 },
-      data_request: { include_assets: true, include_pricing: true },
+      data_request: { include_assets: true, include_pricing: true, include_release: true },
     };
     try {
       const resp = await getJson<any>(
@@ -447,11 +491,18 @@ export async function itemsMeta(
           bpo?.final_price_in_cents != null ? parseInt(bpo.final_price_in_cents, 10) : null;
         const initialCents =
           bpo?.original_price_in_cents != null ? parseInt(bpo.original_price_in_cents, 10) : null;
+        const releaseUnix: number | undefined =
+          typeof si.release?.steam_release_date === 'number' && si.release.steam_release_date > 0
+            ? si.release.steam_release_date
+            : undefined;
         const item: StoreItem = {
           appid: si.appid,
           name: si.name,
           image: assetImage(si) ?? conventionCapsule(si.appid),
           isFree: si.is_free ?? false,
+          comingSoon:
+            si.release?.is_coming_soon ?? (releaseUnix != null && releaseUnix * 1000 > Date.now()),
+          releaseUnix,
           price: bpo
             ? {
                 final: finalCents,
@@ -510,26 +561,22 @@ export interface StoreSectionPage {
 }
 
 /**
- * A full, paginated section listing via store search (json mode returns only
- * name+logo, so appids are recovered from the logo URL and prices/images are
- * hydrated through itemsMeta). Bundles/packages keep an external URL instead.
+ * Generic store-search listing (json mode returns only name+logo, so appids
+ * are recovered from the logo URL and prices/images are hydrated through
+ * itemsMeta). Bundles/packages keep an external URL instead. Used by section
+ * pages and the personalized rows (e.g. `tags=<tagid>`).
  */
-export async function storeSection(
-  id: string,
+export async function searchItems(
+  query: string,
   lang: string,
   start = 0,
-  count = 50
+  count = 50,
+  comingSoonDefault = false
 ): Promise<StoreSectionPage> {
   const { l, cc } = await region(lang);
-  const filter = sectionFilter(id, cc);
-  if (!filter) throw new Error(`Unknown store section: ${id}`);
-
-  const key = `section:${lang}:${cc}:${id}:${start}:${count}`;
-  const cached = cacheGet<StoreSectionPage>(key);
-  if (cached) return cached;
   const url =
     `https://store.steampowered.com/search/results/?json=1&start=${start}&count=${count}` +
-    `&${filter}&l=${l}&cc=${cc}`;
+    `&${query}&l=${l}&cc=${cc}`;
   const data = await getJson<any>(url);
   const raw: any[] = data?.items ?? [];
 
@@ -583,12 +630,37 @@ export async function storeSection(
         image: m?.image ?? p.logo,
         price: m?.price ?? null,
         isFree: m?.isFree ?? false,
+        // In a coming-soon context everything is unreleased by definition —
+        // items whose metadata lacks a date still get the "Coming soon" text.
+        comingSoon: m?.comingSoon ?? (comingSoonDefault ? true : undefined),
+        releaseUnix: m?.releaseUnix,
         url: p.url,
       };
     })
   );
 
-  const page = { items, hasMore: raw.length >= count };
+  return { items, hasMore: raw.length >= count };
+}
+
+/** A full, paginated section listing (cached wrapper around searchItems). */
+export async function storeSection(
+  id: string,
+  lang: string,
+  start = 0,
+  count = 50,
+  sort: SectionSort = 'default'
+): Promise<StoreSectionPage> {
+  const { cc } = await region(lang);
+  const filter = sectionFilter(id, cc);
+  if (!filter) throw new Error(`Unknown store section: ${id}`);
+
+  const key = `section:${lang}:${cc}:${id}:${sort}:${start}:${count}`;
+  const cached = cacheGet<StoreSectionPage>(key);
+  if (cached) return cached;
+
+  const sortBy = SORT_BY[sort];
+  const query = `${filter}${sortBy ? `&sort_by=${sortBy}` : ''}`;
+  const page = await searchItems(query, lang, start, count, id === 'coming_soon');
   cacheSet(key, page);
   return page;
 }

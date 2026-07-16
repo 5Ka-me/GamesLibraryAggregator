@@ -66,6 +66,8 @@ export interface SteamAchievement {
   unlocked: boolean;
   unlockTime?: string | null;
   globalPct?: number | null;
+  /** Hidden in the schema (spoiler) — masked in the UI until clicked. */
+  hidden?: boolean;
 }
 
 export interface SteamGameAchievements {

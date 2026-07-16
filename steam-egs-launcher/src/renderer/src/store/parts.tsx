@@ -106,10 +106,24 @@ function formatCents(cents: number | null | undefined, currency?: string): strin
 }
 
 const PriceTag: React.FC<{ item: StoreItem }> = ({ item }) => {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   if (item.isFree) return <span style={{ fontSize: 12, color: 'var(--muted)' }}>{t('store.free')}</span>;
   const p = item.price;
-  if (!p) return null;
+  if (!p) {
+    // Unreleased games have no price — show the release date instead of an
+    // empty (and confusing) price slot.
+    if (item.comingSoon || item.releaseUnix) {
+      const date = item.releaseUnix
+        ? new Date(item.releaseUnix * 1000).toLocaleDateString(lang === 'ru' ? 'ru-RU' : 'en-US')
+        : t('details.comingSoon');
+      return (
+        <span style={{ fontSize: 12, color: 'var(--muted)' }} title={t('details.comingSoon')}>
+          📅 {date}
+        </span>
+      );
+    }
+    return null;
+  }
 
   const final = p.formattedFinal ?? formatCents(p.final, p.currency);
   const original =

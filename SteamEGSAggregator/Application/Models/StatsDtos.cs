@@ -23,6 +23,8 @@ public class SteamAchievementDto
     public DateTime? UnlockTime { get; set; }
     /// <summary>Share of players worldwide who unlocked it (0–100).</summary>
     public double? GlobalPct { get; set; }
+    /// <summary>Marked as hidden in the game's schema (spoiler protection).</summary>
+    public bool Hidden { get; set; }
 }
 
 /// <summary>Player achievements for one game.</summary>

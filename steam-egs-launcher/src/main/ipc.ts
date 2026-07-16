@@ -12,6 +12,8 @@ import * as legendary from './services/legendary';
 import { login as epicLogin } from './services/epicAuth';
 import { epicStoreDetails } from './services/epicStore';
 import { usdRate } from './services/fxRates';
+import { steamLogin, steamStatus, steamLogout } from './services/steamAuth';
+import { personalSections } from './services/steamPersonal';
 import { scanInstalledSteamAppIds } from './services/steamScan';
 import {
   storeHome,
@@ -60,10 +62,15 @@ export function registerIpc(): void {
   ipcMain.handle('store:itemsMeta', (_e, appids: number[], lang: string) =>
     itemsMeta(appids, lang)
   );
-  ipcMain.handle('store:section', (_e, id: string, lang: string, start: number, count: number) =>
-    storeSection(id, lang, start, count)
+  ipcMain.handle(
+    'store:section',
+    (_e, id: string, lang: string, start: number, count: number, sort?: string) =>
+      storeSection(id, lang, start, count, (sort as never) ?? 'default')
   );
   ipcMain.handle('store:appDetails', (_e, appid: number, lang: string) => appDetails(appid, lang));
+  ipcMain.handle('store:personal', (_e, lang: string, force?: boolean) =>
+    personalSections(lang, !!force)
+  );
   ipcMain.handle('store:findApp', (_e, title: string, lang: string) => findSteamAppId(title, lang));
   ipcMain.handle('epic:storeDetails', (_e, title: string, ns: string | null, lang: string) =>
     epicStoreDetails(title, ns, lang)
@@ -72,6 +79,11 @@ export function registerIpc(): void {
 
   // Daily USD exchange rate (approximate cross-currency price comparison).
   ipcMain.handle('fx:usdRate', (_e, currency: string) => usdRate(currency));
+
+  // Steam web sign-in (no API key; token stays in main memory).
+  ipcMain.handle('steam:login', (_e, remember: boolean) => steamLogin(!!remember));
+  ipcMain.handle('steam:status', () => steamStatus());
+  ipcMain.handle('steam:logout', () => steamLogout());
 
   // EGS embedded OAuth (authenticates legendary + syncs the cloud library).
   ipcMain.handle('epic:login', () => epicLogin());

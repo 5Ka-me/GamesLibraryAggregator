@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, useI18n } from '@app/shared';
-import type { StoreHome, StoreItem, WishlistEntry, WishlistItem } from '../../../preload';
+import type { StoreHome, StoreItem, StoreSection, WishlistEntry, WishlistItem } from '../../../preload';
 import { ctl, ItemCard, SectionBlock, useOwnership } from '../store/parts';
 import { useScrollRestore } from '../hooks/useScrollRestore';
 
@@ -43,6 +43,15 @@ function sectionFallbackName(id: string, tr: (k: string) => string): string {
   return tr(`store.section.${id}`);
 }
 
+// Personalized rows carry the raw tag/game name in `name` — the full heading
+// is localized here.
+function personalTitle(s: StoreSection, tr: (k: string, vars?: Record<string, string>) => string): string {
+  if (s.id === 'personal-discovery') return tr('store.personal.discovery');
+  if (s.id.startsWith('personal-tag-')) return tr('store.personal.becauseTag', { tag: s.name });
+  if (s.id.startsWith('personal-game-')) return tr('store.personal.becausePlayed', { game: s.name });
+  return s.name;
+}
+
 const StorePage: React.FC = () => {
   const { t, lang } = useI18n();
   const own = useOwnership();
@@ -58,6 +67,8 @@ const StorePage: React.FC = () => {
   // Front page.
   const [home, setHome] = useState<StoreHome | null>(null);
   const [homeError, setHomeError] = useState<string | null>(null);
+  // Personalized rows (empty when not signed in to Steam).
+  const [personal, setPersonal] = useState<StoreSection[]>([]);
 
   // Wishlist: raw entries + lazily hydrated metadata + windowed rendering.
   const [entries, setEntries] = useState<WishlistEntry[] | null>(null);
@@ -87,6 +98,10 @@ const StorePage: React.FC = () => {
       .storeHome(lang)
       .then(setHome)
       .catch((e) => setHomeError(e instanceof Error ? e.message : String(e)));
+    window.launcher
+      .storePersonal(lang)
+      .then(setPersonal)
+      .catch(() => setPersonal([]));
   }, [lang]);
 
   // Debounced as-you-type search. A sequence counter drops stale responses
@@ -291,16 +306,39 @@ const StorePage: React.FC = () => {
         <>
           {homeError && <p style={{ color: '#ff6b6b' }}>{t('common.error')}: {homeError}</p>}
           {!home && !homeError && <p style={{ color: 'var(--muted)' }}>{t('lib.loading')}</p>}
-          {home?.sections.map((s) => (
-            <SectionBlock
-              key={s.id}
-              name={s.name || sectionFallbackName(s.id, t as (k: string) => string)}
-              banner={s.banner}
-              items={s.items}
-              own={own}
-              moreTo={SECTION_PAGES.has(s.id) ? `/store/section/${s.id}` : undefined}
-            />
-          ))}
+          {/* Featured carousel first, then the personalized rows, then the rest */}
+          {home?.sections
+            .filter((s) => s.id === 'featured')
+            .map((s) => (
+              <SectionBlock
+                key={s.id}
+                name={s.name || sectionFallbackName(s.id, t as (k: string) => string)}
+                banner={s.banner}
+                items={s.items}
+                own={own}
+              />
+            ))}
+          {home &&
+            personal.map((s) => (
+              <SectionBlock
+                key={s.id}
+                name={personalTitle(s, t as (k: string, vars?: Record<string, string>) => string)}
+                items={s.items}
+                own={own}
+              />
+            ))}
+          {home?.sections
+            .filter((s) => s.id !== 'featured')
+            .map((s) => (
+              <SectionBlock
+                key={s.id}
+                name={s.name || sectionFallbackName(s.id, t as (k: string) => string)}
+                banner={s.banner}
+                items={s.items}
+                own={own}
+                moreTo={SECTION_PAGES.has(s.id) ? `/store/section/${s.id}` : undefined}
+              />
+            ))}
         </>
       ) : (
         <>

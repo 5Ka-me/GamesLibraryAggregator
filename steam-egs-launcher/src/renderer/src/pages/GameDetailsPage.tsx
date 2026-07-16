@@ -152,6 +152,7 @@ const PriceDiff: React.FC<{
 };
 
 // Renders price chips (discount / struck original / final) for either platform.
+// Unreleased games without a price show the release date instead.
 const PriceChips: React.FC<{
   isFree?: boolean;
   discountPct?: number;
@@ -160,11 +161,32 @@ const PriceChips: React.FC<{
   formattedFinal?: string | null;
   finalCents?: number | null;
   currency?: string;
-}> = ({ isFree, discountPct, formattedOriginal, originalCents, formattedFinal, finalCents, currency }) => {
+  comingSoon?: boolean;
+  releaseDate?: string | null;
+}> = ({
+  isFree,
+  discountPct,
+  formattedOriginal,
+  originalCents,
+  formattedFinal,
+  finalCents,
+  currency,
+  comingSoon,
+  releaseDate,
+}) => {
   const { t } = useI18n();
   if (isFree) return <span style={chip}>{t('store.free')}</span>;
   const final = formattedFinal ?? formatCents(finalCents, currency);
-  if (!final) return null;
+  if (!final) {
+    if (comingSoon || releaseDate) {
+      return (
+        <span style={{ ...chip, color: 'var(--muted)' }} title={t('details.comingSoon')}>
+          📅 {releaseDate ?? t('details.comingSoon')}
+        </span>
+      );
+    }
+    return null;
+  }
   return (
     <>
       {(discountPct ?? 0) > 0 && (
@@ -360,6 +382,8 @@ const LaunchInstallSection: React.FC<{
                 formattedFinal={details?.price?.formattedFinal}
                 finalCents={details?.price?.final}
                 currency={details?.price?.currency}
+                comingSoon={details?.comingSoon}
+                releaseDate={details?.releaseDate}
               />
               <PriceDiff current={steamPrice} other={epicPrice} otherLabel="Epic" />
             </>
@@ -391,6 +415,7 @@ const LaunchInstallSection: React.FC<{
                 formattedFinal={epic?.price?.formattedFinal}
                 finalCents={epic?.price?.final}
                 currency={epic?.price?.currency}
+                releaseDate={epic?.releaseDate}
               />
               <PriceDiff current={epicPrice} other={steamPrice} otherLabel="Steam" />
             </>
@@ -407,6 +432,8 @@ const AchievementsBlock: React.FC<{ appid: number }> = ({ appid }) => {
   const { t, lang } = useI18n();
   const [data, setData] = useState<SteamGameAchievements | null>(null);
   const [failed, setFailed] = useState(false);
+  // Hidden achievements revealed by the user (per game visit, like Steam).
+  const [revealed, setRevealed] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     api
@@ -441,6 +468,35 @@ const AchievementsBlock: React.FC<{ appid: number }> = ({ appid }) => {
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
         {sorted.map((a) => {
+          // Hidden + locked achievements are masked (like Steam): a "?" tile
+          // that reveals icon/name/description on click.
+          const masked = !!a.hidden && !a.unlocked && !revealed.has(a.name);
+          if (masked) {
+            return (
+              <div
+                key={a.name}
+                title={t('details.hiddenAch')}
+                onClick={() => setRevealed((prev) => new Set(prev).add(a.name))}
+                style={{
+                  width: 48,
+                  height: 48,
+                  borderRadius: 4,
+                  background: 'var(--panel-2)',
+                  border: '1px dashed var(--border)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: 'var(--muted)',
+                  fontSize: 20,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                ?
+              </div>
+            );
+          }
+
           const icon = a.unlocked ? a.icon : a.iconGray ?? a.icon;
           const tip = `${a.displayName ?? a.name}${a.description ? ` — ${a.description}` : ''}${
             a.globalPct != null ? ` (${a.globalPct.toFixed(1)}%)` : ''
@@ -697,6 +753,8 @@ const GameDetailsPage: React.FC = () => {
                 formattedFinal={details.price?.formattedFinal}
                 finalCents={details.price?.final}
                 currency={details.price?.currency}
+                comingSoon={details.comingSoon}
+                releaseDate={details.releaseDate}
               />
               <PriceDiff current={steamPrice} other={epicPrice} otherLabel="Epic" />
               {details.reviewScoreDesc && (
@@ -745,6 +803,7 @@ const GameDetailsPage: React.FC = () => {
                     formattedFinal={epic.price?.formattedFinal}
                     finalCents={epic.price?.final}
                     currency={epic.price?.currency}
+                    releaseDate={epic.releaseDate}
                   />
                   <PriceDiff current={epicPrice} other={steamPrice} otherLabel="Steam" />
                   {epic.rating != null && (
