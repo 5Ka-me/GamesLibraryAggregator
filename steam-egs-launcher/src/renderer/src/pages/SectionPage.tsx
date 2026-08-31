@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
 import { useI18n } from '@app/shared';
 import type { SectionSort, StoreItem } from '../../../preload';
-import { ctl, ItemCard, useOwnership } from '../store/parts';
+import { applyOwnedFilter, ctl, hideOwnedStore, ItemCard, useOwnership } from '../store/parts';
 import { useScrollRestore } from '../hooks/useScrollRestore';
 
 // Full paginated view of one store section (specials / top sellers / new
@@ -41,11 +41,15 @@ const SectionView: React.FC<{ id: string }> = ({ id }) => {
   const [hasMore, setHasMore] = useState(saved?.hasMore ?? true);
   const [error, setError] = useState<string | null>(null);
   const [sort, setSort] = useState<SectionSort>(saved?.sort ?? 'default');
+  const [hideOwned, setHideOwned] = useState(hideOwnedStore.get());
   const loading = useRef(false);
   // Server offset is tracked separately from items.length: in-page dedupe can
   // shrink a page, and appended items are deduped against previous pages too.
   const nextStart = useRef(saved?.nextStart ?? 0);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
+  // Bumped whenever the list resets (sort/language change) so a page that was
+  // already in flight can't append its now-stale items or skip an offset.
+  const requestSeq = useRef(0);
 
   // Section title: localized name passed from the home page, else i18n by id.
   const title = location.state?.name ?? tr(`store.section.${id}`);
@@ -60,8 +64,10 @@ const SectionView: React.FC<{ id: string }> = ({ id }) => {
   const loadMore = useCallback(async () => {
     if (loading.current) return;
     loading.current = true;
+    const seq = requestSeq.current;
     try {
       const page = await window.launcher.storeSection(id, lang, nextStart.current, PAGE, sort);
+      if (seq !== requestSeq.current) return; // list was reset while loading
       nextStart.current += PAGE;
       setItems((prev) => {
         const seen = new Set(prev.map((p) => `${p.appid}|${p.name}`));
@@ -69,6 +75,7 @@ const SectionView: React.FC<{ id: string }> = ({ id }) => {
       });
       setHasMore(page.hasMore);
     } catch (e) {
+      if (seq !== requestSeq.current) return;
       setError(e instanceof Error ? e.message : String(e));
       setHasMore(false);
     } finally {
@@ -84,6 +91,7 @@ const SectionView: React.FC<{ id: string }> = ({ id }) => {
       mounted.current = true;
       return;
     }
+    requestSeq.current++;
     setItems([]);
     setHasMore(true);
     setError(null);
@@ -127,16 +135,38 @@ const SectionView: React.FC<{ id: string }> = ({ id }) => {
             <option value="name">{t('store.sort.name')}</option>
           </select>
         </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={hideOwned}
+            onChange={(e) => {
+              setHideOwned(e.target.checked);
+              hideOwnedStore.set(e.target.checked);
+            }}
+          />
+          {t('store.hideOwned')}
+        </label>
       </div>
 
       {error && (
-        <p style={{ color: '#ff6b6b' }}>
-          {t('common.error')}: {error}
+        <p style={{ color: '#ff6b6b', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <span>
+            {t('common.error')}: {error}
+          </span>
+          <button
+            style={ctl}
+            onClick={() => {
+              setError(null);
+              setHasMore(true);
+            }}
+          >
+            ↻
+          </button>
         </p>
       )}
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-        {items.map((it, i) => (
+        {applyOwnedFilter(items, own, hideOwned).map((it, i) => (
           <ItemCard key={`${it.appid}-${it.name}-${i}`} item={it} own={own} />
         ))}
       </div>

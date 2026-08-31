@@ -18,6 +18,9 @@ const en: Dict = {
   'lib.loading': 'Loading…',
   'lib.error': 'Error',
   'lib.empty': 'No games yet. Open “Settings” to sync Steam and/or connect EGS.',
+  'lib.sort': 'Sort',
+  'lib.sort.name': 'By name',
+  'lib.sort.playtime': 'By playtime',
 
   'filter.all': 'All',
   'filter.installed': 'Installed',
@@ -66,10 +69,10 @@ const en: Dict = {
   'details.developer': 'Developer',
   'details.publisher': 'Publisher',
   'details.genres': 'Genres',
+  'details.tags': 'Popular tags',
   'details.platforms': 'Platforms',
   'details.reviews': 'Reviews',
   'details.playersNow': 'playing now',
-  'details.myPlaytime': 'My playtime',
   'details.hours': 'h',
   'details.screenshots': 'Screenshots',
   'details.achievements': 'Achievements',
@@ -91,6 +94,7 @@ const en: Dict = {
   'store.searchPlaceholder': 'Search the Steam store…',
   'store.results': 'Search results',
   'store.noResults': 'Nothing found.',
+  'store.hideOwned': 'Hide games I own',
   'store.free': 'Free',
   'store.inLib.steam': 'Already in your Steam library',
   'store.inLib.epic': 'Already in your EGS library',
@@ -104,9 +108,23 @@ const en: Dict = {
   'store.wl.sort.discount': 'Discount',
   'store.wl.discountOnly': 'On sale only',
   'store.wl.filter': 'Filter by name…',
-  'store.personal.discovery': 'Your Discovery Queue',
+  'store.wl.remove': 'Remove from wishlist',
+  'store.wl.removeFail': 'Could not remove from the wishlist (sign in to Steam in Settings).',
+  'store.personal.popularNew': 'Popular New Releases',
   'store.personal.becauseTag': 'Because you like {tag}',
   'store.personal.becausePlayed': 'Because you played {game}',
+
+  'store.dq.tab': 'Discovery Queue',
+  'store.dq.start': 'Generate my queue',
+  'store.dq.empty':
+    'A personal queue of games Steam picked for you. It is generated only when you ask — no queue is wasted.',
+  'store.dq.finished': 'You have reached the end of this queue.',
+  'store.dq.next': 'Next',
+  'store.dq.details': 'Details',
+  'store.dq.addWishlist': 'Add to wishlist',
+  'store.dq.inWishlist': 'In wishlist',
+  'store.dq.needLogin': 'Sign in to Steam (Settings) to get your personal queue.',
+  'store.dq.wishlistFail': 'Could not add to the wishlist.',
 
   'store.sort.default': 'Default',
   'store.sort.priceAsc': 'Price: low → high',
@@ -122,15 +140,6 @@ const en: Dict = {
   'card.install': 'Install',
   'card.uninstall': 'Uninstall',
   'card.cancel': 'Cancel',
-  'card.store': 'Store page',
-
-  'nav.library': '← Library',
-  'nav.downloads': '⬇ Downloads',
-  'downloads.title': 'Downloads',
-  'downloads.empty': 'No active or recent downloads.',
-  'downloads.done': 'Installed',
-  'downloads.error': 'Failed',
-
   'epic.embeddedLogin': 'Sign in to Epic (in-app)',
   'epic.embeddedDesc':
     'Opens Epic sign-in inside the launcher, then authorizes downloads (legendary) and syncs your library.',
@@ -166,7 +175,7 @@ const en: Dict = {
 
   'epic.variantAuto': 'Option A — automatic:',
   'epic.autoDesc':
-    'if Epic Games Launcher is installed and signed in on this PC (works only when the backend runs on the host, not in a container).',
+    'if the Epic Games Launcher is installed and signed in on this PC, import its session.',
   'epic.importLauncher': 'Import from launcher',
   'epic.variantManual': 'Option B — manual:',
   'epic.manualDesc': 'open Epic login, sign in, copy the {code} from the JSON and paste it here.',
@@ -176,15 +185,44 @@ const en: Dict = {
   'epic.connectedAs': 'Connected{name}. EGS games: {count}.',
   'epic.requiresLogin': 'Sign-in required.',
 
-  'ws.title': 'Workspace',
-  'ws.desc':
-    'Your private workspace token. Save it to open your library on another device or after clearing browser data. Anyone with this token sees your library — keep it secret.',
-  'ws.show': 'Show token',
-  'ws.hide': 'Hide',
-  'ws.copy': 'Copy',
-  'ws.copied': 'Copied!',
-  'ws.useExisting': 'Paste an existing token to switch workspace',
-  'ws.apply': 'Switch',
+  'web.landing.title': 'Your Steam + Epic library in one place',
+  'web.landing.desc':
+    'Sign in through Steam to see your Steam library right in the browser — no keys or tokens needed. With the desktop launcher installed, connect it for the full picture: both stores, playtime and installed games.',
+  'web.signIn': 'Sign in through Steam',
+  'web.logout': 'Sign out',
+  'web.loginFailed': 'Steam sign-in failed — try again.',
+  'web.account.desc':
+    'Signing in through Steam only proves your SteamID — the site never sees your password. The library is read with a server-side key and requires public game details.',
+  'web.source.steamOnly': 'Steam library (web mode)',
+  'web.bridge.desc':
+    'When the desktop launcher runs on this computer, the site can read its full merged library (both stores, playtime, installed games). The launcher asks for your permission first.',
+  'web.bridge.available': 'Desktop launcher detected on this computer.',
+  'web.bridge.connect': 'Connect to launcher',
+  'web.bridge.connected': 'Data from the launcher (both stores)',
+  'web.bridge.disconnect': 'Disconnect',
+  'web.bridge.notFound': 'Launcher not detected on this computer.',
+  'web.bridge.denied': 'The launcher denied access (or the request was dismissed).',
+  'epic.signOut': 'Sign out of Epic',
+  'epic.signedOut': 'Signed out of Epic.',
+
+  'bridge.title': 'Web bridge',
+  'bridge.desc':
+    'Lets the web version on this machine read your library from the launcher (read-only: library, stats, achievements). Each website asks for your permission first.',
+  'bridge.enabled': 'Enable local bridge',
+  'bridge.listening': 'Listening on 127.0.0.1:{port}',
+  'bridge.paired': 'Connected sites',
+  'bridge.none': 'No sites connected yet.',
+  'bridge.revoke': 'Revoke',
+
+  'update.title': 'Updates',
+  'update.version': 'Version {version}',
+  'update.check': 'Check for updates',
+  'update.checking': 'Checking…',
+  'update.none': 'You are up to date.',
+  'update.downloading': 'Downloading {version}… {pct}%',
+  'update.ready': 'Update {version} is ready',
+  'update.restart': 'Restart to update',
+  'update.devBuild': 'Updates work only in the installed app.',
 
   'common.error': 'Error',
 };
@@ -203,6 +241,9 @@ const ru: Dict = {
   'lib.loading': 'Загрузка…',
   'lib.error': 'Ошибка',
   'lib.empty': 'Игр пока нет. Откройте «Настройки» и синхронизируйте Steam и/или подключите EGS.',
+  'lib.sort': 'Сортировка',
+  'lib.sort.name': 'По имени',
+  'lib.sort.playtime': 'По времени в игре',
 
   'filter.all': 'Все',
   'filter.installed': 'Установленные',
@@ -251,10 +292,10 @@ const ru: Dict = {
   'details.developer': 'Разработчик',
   'details.publisher': 'Издатель',
   'details.genres': 'Жанры',
+  'details.tags': 'Метки',
   'details.platforms': 'Платформы',
   'details.reviews': 'Отзывы',
   'details.playersNow': 'сейчас играют',
-  'details.myPlaytime': 'Наиграно',
   'details.hours': 'ч',
   'details.screenshots': 'Скриншоты',
   'details.achievements': 'Достижения',
@@ -276,6 +317,7 @@ const ru: Dict = {
   'store.searchPlaceholder': 'Поиск по магазину Steam…',
   'store.results': 'Результаты поиска',
   'store.noResults': 'Ничего не найдено.',
+  'store.hideOwned': 'Скрывать имеющиеся',
   'store.free': 'Бесплатно',
   'store.inLib.steam': 'Уже в вашей библиотеке Steam',
   'store.inLib.epic': 'Уже в вашей библиотеке EGS',
@@ -289,9 +331,23 @@ const ru: Dict = {
   'store.wl.sort.discount': 'Скидка',
   'store.wl.discountOnly': 'Только со скидкой',
   'store.wl.filter': 'Фильтр по названию…',
-  'store.personal.discovery': 'Ваша очередь исследования',
+  'store.wl.remove': 'Убрать из вишлиста',
+  'store.wl.removeFail': 'Не удалось убрать из вишлиста (войдите в Steam в Настройках).',
+  'store.personal.popularNew': 'Популярные новинки',
   'store.personal.becauseTag': 'Потому что вам нравится: {tag}',
   'store.personal.becausePlayed': 'Потому что вы играли в {game}',
+
+  'store.dq.tab': 'Очередь исследования',
+  'store.dq.start': 'Сгенерировать очередь',
+  'store.dq.empty':
+    'Персональная очередь игр, подобранных Steam. Генерируется только по вашей команде — очередь не расходуется зря.',
+  'store.dq.finished': 'Вы просмотрели всю очередь.',
+  'store.dq.next': 'Дальше',
+  'store.dq.details': 'Подробнее',
+  'store.dq.addWishlist': 'В вишлист',
+  'store.dq.inWishlist': 'В вишлисте',
+  'store.dq.needLogin': 'Войдите в Steam (Настройки), чтобы получить персональную очередь.',
+  'store.dq.wishlistFail': 'Не удалось добавить в вишлист.',
 
   'store.sort.default': 'По умолчанию',
   'store.sort.priceAsc': 'Цена: по возрастанию',
@@ -307,15 +363,6 @@ const ru: Dict = {
   'card.install': 'Установить',
   'card.uninstall': 'Удалить',
   'card.cancel': 'Отмена',
-  'card.store': 'Страница в магазине',
-
-  'nav.library': '← Библиотека',
-  'nav.downloads': '⬇ Загрузки',
-  'downloads.title': 'Загрузки',
-  'downloads.empty': 'Нет активных или недавних загрузок.',
-  'downloads.done': 'Установлено',
-  'downloads.error': 'Ошибка',
-
   'epic.embeddedLogin': 'Войти в Epic (в приложении)',
   'epic.embeddedDesc':
     'Откроет вход Epic внутри лаунчера, затем авторизует загрузки (legendary) и синхронизирует библиотеку.',
@@ -351,7 +398,7 @@ const ru: Dict = {
 
   'epic.variantAuto': 'Вариант А — автоматически:',
   'epic.autoDesc':
-    'если на этом ПК установлен и залогинен Epic Games Launcher (работает только когда бэкенд запущен на хосте, не в контейнере).',
+    'если на этом ПК установлен и залогинен Epic Games Launcher — импортировать его сессию.',
   'epic.importLauncher': 'Импортировать из лаунчера',
   'epic.variantManual': 'Вариант B — вручную:',
   'epic.manualDesc': 'откройте вход Epic, войдите, скопируйте {code} из JSON и вставьте сюда.',
@@ -361,17 +408,46 @@ const ru: Dict = {
   'epic.connectedAs': 'Подключено{name}. Игр EGS: {count}.',
   'epic.requiresLogin': 'Требуется вход.',
 
+  'update.title': 'Обновления',
+  'update.version': 'Версия {version}',
+  'update.check': 'Проверить обновления',
+  'update.checking': 'Проверка…',
+  'update.none': 'У вас последняя версия.',
+  'update.downloading': 'Загрузка {version}… {pct}%',
+  'update.ready': 'Обновление {version} готово',
+  'update.restart': 'Перезапустить и обновить',
+  'update.devBuild': 'Обновления работают только в установленном приложении.',
+
   'common.error': 'Ошибка',
 
-  'ws.title': 'Рабочее пространство',
-  'ws.desc':
-    'Секретный токен вашего пространства. Сохраните его, чтобы открыть библиотеку на другом устройстве или после очистки данных браузера. Любой, у кого есть токен, видит вашу библиотеку — держите его в секрете.',
-  'ws.show': 'Показать токен',
-  'ws.hide': 'Скрыть',
-  'ws.copy': 'Копировать',
-  'ws.copied': 'Скопировано!',
-  'ws.useExisting': 'Вставьте существующий токен, чтобы переключить пространство',
-  'ws.apply': 'Переключить',
+  'web.landing.title': 'Ваши библиотеки Steam и Epic в одном месте',
+  'web.landing.desc':
+    'Войдите через Steam, чтобы увидеть свою библиотеку Steam прямо в браузере — без ключей и токенов. А если установлен десктоп-лаунчер, подключите его и получите полную картину: оба стора, наигранное время и установленные игры.',
+  'web.signIn': 'Войти через Steam',
+  'web.logout': 'Выйти',
+  'web.loginFailed': 'Вход через Steam не удался — попробуйте ещё раз.',
+  'web.account.desc':
+    'Вход через Steam лишь подтверждает ваш SteamID — сайт никогда не видит пароль. Библиотека читается серверным ключом и требует публичных данных об играх в профиле.',
+  'web.source.steamOnly': 'Библиотека Steam (веб-режим)',
+  'web.bridge.desc':
+    'Если на этом компьютере запущен десктоп-лаунчер, сайт может читать его полную объединённую библиотеку (оба стора, время, установленные игры). Лаунчер сначала спросит вашего разрешения.',
+  'web.bridge.available': 'На этом компьютере найден десктоп-лаунчер.',
+  'web.bridge.connect': 'Подключить лаунчер',
+  'web.bridge.connected': 'Данные из лаунчера (оба стора)',
+  'web.bridge.disconnect': 'Отключить',
+  'web.bridge.notFound': 'Лаунчер на этом компьютере не найден.',
+  'web.bridge.denied': 'Лаунчер отклонил доступ (или запрос был закрыт).',
+  'epic.signOut': 'Выйти из Epic',
+  'epic.signedOut': 'Выход из Epic выполнен.',
+
+  'bridge.title': 'Мост для веба',
+  'bridge.desc':
+    'Позволяет веб-версии на этом компьютере читать библиотеку из лаунчера (только чтение: библиотека, статистика, ачивки). Каждый сайт сначала запрашивает ваше разрешение.',
+  'bridge.enabled': 'Включить локальный мост',
+  'bridge.listening': 'Слушает 127.0.0.1:{port}',
+  'bridge.paired': 'Подключённые сайты',
+  'bridge.none': 'Пока нет подключённых сайтов.',
+  'bridge.revoke': 'Отозвать',
 };
 
 const dicts: Record<Lang, Dict> = { en, ru };

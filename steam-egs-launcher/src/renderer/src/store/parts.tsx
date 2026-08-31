@@ -58,6 +58,31 @@ function ownedIn(item: StoreItem, own: Ownership | null): { steam: boolean; epic
   };
 }
 
+/** True when the item is in the library on either store. */
+function isOwned(item: StoreItem, own: Ownership | null): boolean {
+  const o = ownedIn(item, own);
+  return o.steam || o.epic;
+}
+
+/** Applies the "hide owned" filter (no-op when off or ownership is unknown). */
+export function applyOwnedFilter(
+  items: StoreItem[],
+  own: Ownership | null,
+  hideOwned: boolean
+): StoreItem[] {
+  return hideOwned && own ? items.filter((i) => !isOwned(i, own)) : items;
+}
+
+// "Hide games I own" toggle — shared across the store pages (they mount
+// separately, so a plain module value keeps them in agreement).
+let _hideOwned = false;
+export const hideOwnedStore = {
+  get: () => _hideOwned,
+  set: (v: boolean) => {
+    _hideOwned = v;
+  },
+};
+
 // ---------- small presentational bits ----------
 
 export const ctl: React.CSSProperties = {
@@ -100,12 +125,13 @@ const OwnedBadges: React.FC<{ item: StoreItem; own: Ownership | null }> = ({ ite
   );
 };
 
-function formatCents(cents: number | null | undefined, currency?: string): string | null {
+/** Fallback price rendering when the store didn't send a formatted string. */
+export function formatCents(cents: number | null | undefined, currency?: string): string | null {
   if (cents == null) return null;
   return `${(cents / 100).toFixed(2)} ${currency ?? ''}`.trim();
 }
 
-const PriceTag: React.FC<{ item: StoreItem }> = ({ item }) => {
+export const PriceTag: React.FC<{ item: StoreItem }> = ({ item }) => {
   const { t, lang } = useI18n();
   if (item.isFree) return <span style={{ fontSize: 12, color: 'var(--muted)' }}>{t('store.free')}</span>;
   const p = item.price;
@@ -141,7 +167,7 @@ const PriceTag: React.FC<{ item: StoreItem }> = ({ item }) => {
   );
 };
 
-export function openItem(item: StoreItem): void {
+function openItem(item: StoreItem): void {
   // Bundles/spotlights carry an explicit URL → browser. Games open in the
   // Steam client when it's installed, otherwise the browser (decided in main).
   if (item.url || item.appid <= 0) {
@@ -225,7 +251,7 @@ export const ItemCard: React.FC<{ item: StoreItem; own: Ownership | null }> = ({
 // Wide banner card for spotlight sections: promo label as a badge over the
 // image, game name as the caption. Game banners navigate to the in-app game
 // page; sale-page banners open externally; linkless banners aren't clickable.
-export const BannerCard: React.FC<{ item: StoreItem }> = ({ item }) => {
+const BannerCard: React.FC<{ item: StoreItem }> = ({ item }) => {
   const navigate = useNavigate();
   const clickable = item.appid > 0 || !!item.url;
   const onClick = () => {
@@ -280,8 +306,13 @@ export const SectionBlock: React.FC<{
   own: Ownership | null;
   /** Route of the full-section page; renders a "Show all" link when set. */
   moreTo?: string;
-}> = ({ name, banner, items, own, moreTo }) => {
+  /** Drop games already in the library. */
+  hideOwned?: boolean;
+}> = ({ name, banner, items, own, moreTo, hideOwned }) => {
   const { t } = useI18n();
+  // Banners (spotlights) aren't ownership-matchable — never filter those.
+  const shown = banner ? items : applyOwnedFilter(items, own, !!hideOwned);
+  if (shown.length === 0) return null; // whole row owned → hide it
   return (
     <section style={{ marginBottom: 28 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, margin: '0 0 10px' }}>
@@ -293,7 +324,7 @@ export const SectionBlock: React.FC<{
         )}
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-        {items.map((it, i) =>
+        {shown.map((it, i) =>
           banner || it.banner ? (
             <BannerCard key={`${it.name}-${i}`} item={it} />
           ) : (

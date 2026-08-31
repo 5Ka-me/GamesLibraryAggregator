@@ -38,9 +38,14 @@ function libraryRoots(steamPath: string): string[] {
       existsSync
     );
   if (vdf) {
-    const text = readFileSync(vdf, 'utf8');
-    for (const m of text.matchAll(/"path"\s*"([^"]+)"/g)) {
-      roots.add(m[1].replace(/\\\\/g, '\\'));
+    try {
+      const text = readFileSync(vdf, 'utf8');
+      for (const m of text.matchAll(/"path"\s*"([^"]+)"/g)) {
+        roots.add(m[1].replace(/\\\\/g, '\\'));
+      }
+    } catch {
+      // An unreadable vdf must not fail the whole scan — the main Steam
+      // folder alone still finds most installs.
     }
   }
   return [...roots];

@@ -7,13 +7,15 @@ import {
 import type { DownloadProgress } from '../../../preload';
 
 // Renderer-side EGS download store. Tracks installed games and live progress,
-// exposes a shared LibraryActions (consumed by GameCard) plus a launcher-local
-// context (consumed by the Downloads page).
+// and exposes a shared LibraryActions (consumed by GameCard and the game page)
+// plus the launcher-local availability flag used by Settings.
 
 interface LegendaryContextValue {
   actions: LibraryActions;
-  downloads: DownloadProgress[];
   available: boolean;
+  /** Last failed download, so a failure isn't silently swallowed. */
+  lastError: { title: string; error: string } | null;
+  dismissError: () => void;
 }
 
 const LegendaryContext = createContext<LegendaryContextValue | null>(null);
@@ -23,6 +25,7 @@ export const LegendaryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [steamInstalled, setSteamInstalled] = useState<Set<string>>(new Set());
   const [progress, setProgress] = useState<Record<string, DownloadProgress>>({});
   const [available, setAvailable] = useState(false);
+  const [lastError, setLastError] = useState<{ title: string; error: string } | null>(null);
 
   const refreshInstalled = useCallback(async () => {
     const list = await window.launcher.legendaryListInstalled().catch(() => []);
@@ -35,13 +38,18 @@ export const LegendaryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, []);
 
   useEffect(() => {
-    window.launcher.legendaryAvailable().then(setAvailable);
+    window.launcher.legendaryAvailable().then(setAvailable).catch(() => setAvailable(false));
     refreshInstalled();
     refreshSteam();
 
     const off = window.launcher.onDownloadProgress((p) => {
       setProgress((prev) => ({ ...prev, [p.appName]: p }));
       if (p.status === 'done') refreshInstalled();
+      // A failed install used to just revert the card to "Install" with no
+      // explanation anywhere.
+      if (p.status === 'error' && p.error) {
+        setLastError({ title: p.title ?? p.appName, error: p.error });
+      }
     });
 
     // Re-scan install state when the user returns to the launcher (they may
@@ -60,20 +68,24 @@ export const LegendaryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const installEpic = useCallback((appName: string, title?: string) => {
     setProgress((prev) => ({ ...prev, [appName]: { appName, title, pct: 0, status: 'running' } }));
-    window.launcher.legendaryInstall(appName, title).catch((e) => {
+    window.launcher.legendaryInstall(appName, title).catch((e: unknown) => {
+      const error = e instanceof Error ? e.message : String(e);
       setProgress((prev) => ({
         ...prev,
-        [appName]: { appName, title, pct: 0, status: 'error', error: String(e) },
+        [appName]: { appName, title, pct: 0, status: 'error', error },
       }));
+      setLastError({ title: title ?? appName, error });
     });
   }, []);
 
   const cancelEpic = useCallback((appName: string) => {
-    window.launcher.legendaryCancel(appName);
+    void window.launcher.legendaryCancel(appName).catch(() => undefined);
   }, []);
 
   const launchEpic = useCallback((appName: string) => {
-    window.launcher.legendaryLaunch(appName);
+    void window.launcher.legendaryLaunch(appName).catch((e: unknown) => {
+      setLastError({ title: appName, error: e instanceof Error ? e.message : String(e) });
+    });
   }, []);
 
   const uninstallEpic = useCallback(
@@ -109,11 +121,11 @@ export const LegendaryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     [getEpicState, installEpic, uninstallEpic, launchEpic, cancelEpic, getSteamState]
   );
 
-  const downloads = useMemo(() => Object.values(progress), [progress]);
+  const dismissError = useCallback(() => setLastError(null), []);
 
   const value = useMemo<LegendaryContextValue>(
-    () => ({ actions, downloads, available }),
-    [actions, downloads, available]
+    () => ({ actions, available, lastError, dismissError }),
+    [actions, available, lastError, dismissError]
   );
 
   return (

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { api, EpicAccount, SteamAccount, useI18n, Header, SteamPanel, EpicPanel } from '@app/shared';
-import WorkspacePanel from '../components/WorkspacePanel';
+import { api, Me, steamLoginUrl, useI18n, Header } from '@app/shared';
+import { bridgeAvailable, bridgeDisconnect, bridgePair, bridgeToken } from '../bridge';
 
 const card: React.CSSProperties = {
   border: '1px solid var(--border)',
@@ -10,47 +10,65 @@ const card: React.CSSProperties = {
   marginBottom: 20,
 };
 
-const syncBtn: React.CSSProperties = {
+const btn: React.CSSProperties = {
   padding: '8px 14px',
   borderRadius: 6,
   border: '1px solid var(--border)',
   cursor: 'pointer',
+  background: 'var(--panel-2)',
+  color: 'var(--text)',
+  fontWeight: 600,
+};
+
+const accentBtn: React.CSSProperties = {
+  ...btn,
   background: 'var(--accent)',
   color: 'var(--on-accent)',
-  fontWeight: 600,
+  borderColor: 'transparent',
 };
 
 const SettingsPage: React.FC = () => {
   const { t } = useI18n();
-  const [steam, setSteam] = useState<SteamAccount | null>(null);
-  const [epic, setEpic] = useState<EpicAccount | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
+  const [me, setMe] = useState<Me | null>(null);
+  const [bridgeUp, setBridgeUp] = useState(false);
+  const [paired, setPaired] = useState(!!bridgeToken());
+  const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
-  const loadAccounts = useCallback(async () => {
-    const [s, e] = await Promise.all([
-      api.getSteamAccount().catch(() => null),
-      api.getEpicAccount().catch(() => null),
+  const refresh = useCallback(async () => {
+    const [meRes, up] = await Promise.all([
+      api.getMe().catch((): Me => ({ authenticated: false })),
+      bridgeAvailable(),
     ]);
-    setSteam(s);
-    setEpic(e);
+    setMe(meRes);
+    setBridgeUp(up);
+    setPaired(!!bridgeToken());
   }, []);
 
   useEffect(() => {
-    loadAccounts();
-  }, [loadAccounts]);
+    refresh();
+  }, [refresh]);
 
-  const doSync = async (what: 'steam' | 'epic', fn: () => Promise<unknown>) => {
-    setBusy(what);
+  const logout = async () => {
+    setBusy(true);
+    try {
+      await api.logout();
+      await refresh();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const connect = async () => {
+    setBusy(true);
     setMsg(null);
     try {
-      await fn();
-      setMsg(`✅ ${t('settings.syncDone', { what })}`);
-      await loadAccounts();
-    } catch (e) {
-      setMsg(`${t('common.error')}: ${e instanceof Error ? e.message : String(e)}`);
+      // A denial (or a dismissed dialog) must say so — it used to look
+      // identical to "nothing happened".
+      if (!(await bridgePair())) setMsg(t('web.bridge.denied'));
+      setPaired(!!bridgeToken());
     } finally {
-      setBusy(null);
+      setBusy(false);
     }
   };
 
@@ -58,47 +76,55 @@ const SettingsPage: React.FC = () => {
     <div style={{ maxWidth: 900, margin: '0 auto', padding: '24px 16px' }}>
       <Header action="back" />
 
-      {/* Accounts */}
-      <div style={{ ...card, display: 'flex', alignItems: 'center', gap: 24, flexWrap: 'wrap' }}>
-        <div>
-          <div style={{ color: 'var(--muted)', fontSize: 12 }}>{t('settings.account.steam')}</div>
-          <div style={{ fontWeight: 600 }}>
-            {steam?.personaName ?? (steam?.configured ? steam.steamId : t('settings.notConfigured'))}
-          </div>
-        </div>
-        <div>
-          <div style={{ color: 'var(--muted)', fontSize: 12 }}>{t('settings.account.epic')}</div>
-          <div style={{ fontWeight: 600 }}>
-            {epic?.connected ? epic.displayName ?? t('settings.connected') : t('settings.notConnected')}
-          </div>
-        </div>
-      </div>
-
       {msg && <p style={{ padding: '8px 10px', background: 'var(--panel-2)', borderRadius: 6 }}>{msg}</p>}
 
+      {/* Steam account (web session) */}
       <div style={card}>
-        <h3 style={{ marginTop: 0 }}>{t('ws.title')}</h3>
-        <WorkspacePanel />
+        <h3 style={{ marginTop: 0 }}>{t('settings.account.steam')}</h3>
+        {me === null ? (
+          <p style={{ margin: 0, color: 'var(--muted)' }}>{t('lib.loading')}</p>
+        ) : me.authenticated ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <span style={{ fontWeight: 600 }}>{me.personaName || me.steamId}</span>
+            <button style={btn} disabled={busy} onClick={logout}>
+              {t('web.logout')}
+            </button>
+          </div>
+        ) : (
+          <button
+            style={accentBtn}
+            onClick={() => (window.location.href = steamLoginUrl())}
+          >
+            {t('web.signIn')}
+          </button>
+        )}
+        <p style={{ margin: '10px 0 0', color: 'var(--muted)', fontSize: 13 }}>{t('web.account.desc')}</p>
       </div>
 
+      {/* Desktop launcher bridge */}
       <div style={card}>
-        <h3 style={{ marginTop: 0 }}>{t('settings.steam')}</h3>
-        <SteamPanel initialSteamId={steam?.steamId} onChanged={loadAccounts} />
-        <div style={{ marginTop: 14 }}>
-          <button style={syncBtn} disabled={busy !== null} onClick={() => doSync('steam', api.syncSteam)}>
-            {busy === 'steam' ? t('settings.syncing') : t('settings.syncSteam')}
+        <h3 style={{ marginTop: 0 }}>{t('bridge.title')}</h3>
+        <p style={{ margin: '4px 0 10px', color: 'var(--muted)', fontSize: 13 }}>{t('web.bridge.desc')}</p>
+        {!bridgeUp && <p style={{ margin: 0, color: 'var(--muted)' }}>{t('web.bridge.notFound')}</p>}
+        {bridgeUp && !paired && (
+          <button style={accentBtn} disabled={busy} onClick={connect}>
+            {t('web.bridge.connect')}
           </button>
-        </div>
-      </div>
-
-      <div style={card}>
-        <h3 style={{ marginTop: 0 }}>{t('settings.epic')}</h3>
-        <EpicPanel onChanged={loadAccounts} />
-        <div style={{ marginTop: 14 }}>
-          <button style={syncBtn} disabled={busy !== null} onClick={() => doSync('epic', api.syncEpic)}>
-            {busy === 'epic' ? t('settings.syncing') : t('settings.syncEpic')}
-          </button>
-        </div>
+        )}
+        {bridgeUp && paired && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <span style={{ color: 'var(--ok, #2e7d32)', fontWeight: 600 }}>✓ {t('web.bridge.connected')}</span>
+            <button
+              style={btn}
+              onClick={() => {
+                bridgeDisconnect();
+                setPaired(false);
+              }}
+            >
+              {t('web.bridge.disconnect')}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

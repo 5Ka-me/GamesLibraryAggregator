@@ -1,6 +1,10 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { ApiRequestInit } from '../main/services/apiClient';
+import type { BridgeStatus } from '../main/services/bridge';
+import type { UpdateState } from '../main/services/updater';
 import type { InstalledGame } from '../main/services/legendary';
+
+export type { BridgeStatus, UpdateState };
 import type { EpicAuthResult } from '../main/services/epicAuth';
 import type { SteamLoginResult } from '../main/services/steamAuth';
 import type {
@@ -31,7 +35,7 @@ export interface DownloadProgress {
 // The typed API exposed to the renderer as `window.launcher`. Keep it small and
 // serializable — everything crosses the context bridge.
 const launcher = {
-  /** Proxy a call to the .NET API through the main process. */
+  /** Call the local API (library, accounts, syncs) in the main process. */
   apiFetch: <T = unknown>(path: string, init?: ApiRequestInit): Promise<T> =>
     ipcRenderer.invoke('api:fetch', path, init) as Promise<T>,
 
@@ -44,18 +48,29 @@ const launcher = {
   /** Quit the launcher. */
   quit: (): Promise<void> => ipcRenderer.invoke('app:quit'),
 
-  // Workspace token (stored encrypted in the OS keystore by the main process).
-  getToken: (): Promise<string | null> => ipcRenderer.invoke('workspace:getToken'),
-  setToken: (token: string): Promise<void> => ipcRenderer.invoke('workspace:setToken', token),
-  clearToken: (): Promise<void> => ipcRenderer.invoke('workspace:clearToken'),
-
-  // API base URL.
-  getApiBase: (): Promise<string> => ipcRenderer.invoke('config:getApiBase'),
-  setApiBase: (url: string): Promise<void> => ipcRenderer.invoke('config:setApiBase', url),
+  // Auto-update (GitHub Releases; inert in dev builds).
+  appVersion: (): Promise<string> => ipcRenderer.invoke('app:version'),
+  updateStatus: (): Promise<UpdateState> => ipcRenderer.invoke('update:state'),
+  updateCheck: (): Promise<UpdateState> => ipcRenderer.invoke('update:check'),
+  /** Restart into the downloaded update. */
+  updateInstall: (): Promise<void> => ipcRenderer.invoke('update:install'),
+  /** Subscribe to update-state changes. Returns an unsubscribe function. */
+  onUpdateState: (cb: (s: UpdateState) => void): (() => void) => {
+    const listener = (_e: unknown, payload: UpdateState) => cb(payload);
+    ipcRenderer.on('update:state', listener);
+    return () => ipcRenderer.removeListener('update:state', listener);
+  },
 
   // EGS install folder.
   getInstallPath: (): Promise<string> => ipcRenderer.invoke('config:getInstallPath'),
   setInstallPath: (path: string): Promise<void> => ipcRenderer.invoke('config:setInstallPath', path),
+
+  // Local web bridge (read-only API for the web app on this machine).
+  bridgeStatus: (): Promise<BridgeStatus> => ipcRenderer.invoke('bridge:status'),
+  bridgeSetEnabled: (enabled: boolean): Promise<BridgeStatus> =>
+    ipcRenderer.invoke('bridge:setEnabled', enabled),
+  bridgeRevoke: (origin: string): Promise<BridgeStatus> =>
+    ipcRenderer.invoke('bridge:revoke', origin),
 
   // Steam install-state (appids installed on this machine).
   steamListInstalled: (): Promise<string[]> => ipcRenderer.invoke('steam:listInstalled'),
@@ -78,9 +93,18 @@ const launcher = {
   ): Promise<StoreSectionPage> => ipcRenderer.invoke('store:section', id, lang, start, count, sort),
   storeAppDetails: (appid: number, lang: string): Promise<GameDetails> =>
     ipcRenderer.invoke('store:appDetails', appid, lang),
-  /** Personalized rows (Discovery Queue etc.); [] when not signed in to Steam. */
+  /** Personalized rows; [] when not signed in to Steam. */
   storePersonal: (lang: string, force?: boolean): Promise<StoreSection[]> =>
     ipcRenderer.invoke('store:personal', lang, force),
+  /** Generates a fresh Discovery Queue (consumes one on the Steam side — user-driven only). */
+  steamDiscoveryQueue: (lang: string): Promise<StoreItem[]> =>
+    ipcRenderer.invoke('steam:discoveryQueue', lang),
+  /** Adds a game to the Steam wishlist via the signed-in session. */
+  steamAddToWishlist: (appid: number): Promise<boolean> =>
+    ipcRenderer.invoke('steam:addToWishlist', appid),
+  /** Removes a game from the Steam wishlist via the signed-in session. */
+  steamRemoveFromWishlist: (appid: number): Promise<boolean> =>
+    ipcRenderer.invoke('steam:removeFromWishlist', appid),
   /** Epic offer details by namespace (library) or title search; null if not on EGS. */
   epicStoreDetails: (title: string, ns: string | null, lang: string): Promise<EpicDetails | null> =>
     ipcRenderer.invoke('epic:storeDetails', title, ns, lang),
@@ -119,6 +143,13 @@ const launcher = {
     const listener = (_e: unknown, payload: DownloadProgress) => cb(payload);
     ipcRenderer.on('legendary:progress', listener);
     return () => ipcRenderer.removeListener('legendary:progress', listener);
+  },
+
+  /** Fires after a background library autosync — refetch the library. */
+  onLibraryChanged: (cb: () => void): (() => void) => {
+    const listener = () => cb();
+    ipcRenderer.on('library:changed', listener);
+    return () => ipcRenderer.removeListener('library:changed', listener);
   },
 };
 

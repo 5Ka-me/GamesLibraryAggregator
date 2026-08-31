@@ -2,16 +2,12 @@
 // launcher. Uses explicit re-exports (not `export *`) so the compiled CommonJS
 // keeps statically-detectable named exports for Rollup/webpack.
 
-export {
-  api,
-  workspace,
-  configureApiBase,
-  configureTransport,
-} from './api/client';
+export { api, steamLoginUrl, configureTransport } from './api/client';
 export type {
   Source,
   GameEntry,
   Game,
+  Me,
   EpicAuthResult,
   SteamAccount,
   EpicAccount,

@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>GL Aggregator — bridge demo</title>
+<style>
+  body { font: 14px/1.5 system-ui, sans-serif; max-width: 760px; margin: 40px auto; padding: 0 16px; }
+  button { padding: 8px 14px; border-radius: 6px; border: 1px solid #888; cursor: pointer; margin-right: 8px; }
+  pre { background: #f4f4f4; padding: 12px; border-radius: 8px; overflow: auto; max-height: 420px; }
+  .ok { color: #2e7d32; } .bad { color: #c62828; }
+</style>
+</head>
+<body>
+<h1>GL Aggregator — local bridge demo</h1>
+<p>
+  Serve this page over http(s) (an <code>Origin</code> header is required — <code>file://</code> won't work), e.g.:
+  <code>python -m http.server 8123</code> in <code>docs/</code> → <a href="http://localhost:8123/bridge-demo.html">localhost:8123/bridge-demo.html</a>.
+</p>
+<p>
+  <button id="ping">1. Ping</button>
+  <button id="pair">2. Pair (launcher shows a dialog)</button>
+  <button id="lib">3. Fetch library</button>
+  <span id="status"></span>
+</p>
+<pre id="out">—</pre>
+<script>
+  const BRIDGE = 'http://127.0.0.1:17832';
+  const out = document.getElementById('out');
+  const status = document.getElementById('status');
+  const show = (obj) => { out.textContent = typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2); };
+  const setStatus = (msg, ok) => { status.textContent = msg; status.className = ok ? 'ok' : 'bad'; };
+  const token = () => localStorage.getItem('bridgeToken');
+
+  document.getElementById('ping').onclick = async () => {
+    try {
+      const res = await fetch(`${BRIDGE}/bridge/ping`);
+      show(await res.json());
+      setStatus('launcher detected', true);
+    } catch (e) { show(String(e)); setStatus('launcher not running?', false); }
+  };
+
+  document.getElementById('pair').onclick = async () => {
+    try {
+      const res = await fetch(`${BRIDGE}/bridge/pair`, { method: 'POST' });
+      const json = await res.json();
+      if (res.ok && json.token) {
+        localStorage.setItem('bridgeToken', json.token);
+        show({ paired: true });
+        setStatus('paired', true);
+      } else { show(json); setStatus('pairing denied', false); }
+    } catch (e) { show(String(e)); setStatus('pair failed', false); }
+  };
+
+  document.getElementById('lib').onclick = async () => {
+    if (!token()) { setStatus('pair first', false); return; }
+    try {
+      const res = await fetch(`${BRIDGE}/bridge/api/library`, {
+        headers: { Authorization: `Bearer ${token()}` },
+      });
+      const json = await res.json();
+      show(json);
+      setStatus(res.ok ? `${json.length} games` : `HTTP ${res.status}`, res.ok);
+    } catch (e) { show(String(e)); setStatus('fetch failed', false); }
+  };
+</script>
+</body>
+</html>

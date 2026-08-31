@@ -9,7 +9,9 @@
 // store once to settle the challenge cookie, then the request is retried.
 
 import { BrowserWindow, session, type Session } from 'electron';
+import { normalizeTitle } from '@app/shared';
 import { getStoreCacheTtlMs } from '../config';
+import { cached } from './cache';
 import { getRegions } from './regions';
 
 const GRAPHQL_URL = 'https://store.epicgames.com/graphql';
@@ -48,16 +50,18 @@ export interface EpicDetails {
   storeUrl?: string | null;
 }
 
-const cache = new Map<string, { at: number; data: EpicDetails | null }>();
+// Cache namespace (userData/cache/epicStore.json); null results ARE cached —
+// a game absent from EGS shouldn't be re-searched on every visit.
+const NS = 'epicStore';
 
 // Locale follows the UI language; the country (→ currency, regional prices)
-// comes from the EGS account country stored in the backend (fallback US).
-async function region(lang: string): Promise<{ country: string; locale: string }> {
-  const { epicCc } = await getRegions();
-  return { country: epicCc, locale: lang === 'ru' ? 'ru' : 'en-US' };
+// comes from the local EGS account country (fallback US).
+function region(lang: string): { country: string; locale: string } {
+  return { country: getRegions().epicCc, locale: lang === 'ru' ? 'ru' : 'en-US' };
 }
 
-const normalize = (s: string): string => s.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+// Same key cross-store matching uses everywhere (see @app/shared/matching).
+const normalize = normalizeTitle;
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -67,22 +71,27 @@ function epicSession(): Session {
   return ses;
 }
 
-let primed = false;
+// In-flight priming run, so concurrent 403s wait for the same challenge
+// instead of retrying before the cookie exists. Cleared afterwards: the
+// challenge cookie expires, and the recovery path must stay available.
+let priming: Promise<void> | null = null;
 
 /** Loads the store once in a hidden window so a Cloudflare challenge can settle. */
-async function primeCloudflare(): Promise<void> {
-  if (primed) return;
-  primed = true;
-  const win = new BrowserWindow({ show: false, webPreferences: { partition: PARTITION } });
-  try {
-    win.webContents.setUserAgent(CHROME_UA);
-    await win.loadURL('https://store.epicgames.com/');
-    await new Promise((r) => setTimeout(r, 6000));
-  } catch {
-    /* best effort */
-  } finally {
-    win.destroy();
-  }
+function primeCloudflare(): Promise<void> {
+  priming ??= (async () => {
+    const win = new BrowserWindow({ show: false, webPreferences: { partition: PARTITION } });
+    try {
+      win.webContents.setUserAgent(CHROME_UA);
+      await win.loadURL('https://store.epicgames.com/');
+      await new Promise((r) => setTimeout(r, 6000));
+    } catch {
+      /* best effort */
+    } finally {
+      win.destroy();
+      priming = null;
+    }
+  })();
+  return priming;
 }
 
 async function graphqlOnce(query: string, variables: Record<string, unknown>): Promise<Response> {
@@ -264,6 +273,24 @@ async function fetchHtmlGallery(storeUrl: string): Promise<string[]> {
 }
 
 /**
+ * Product-page URL for a library game — resolved lazily on click (avoids a
+ * Cloudflare 403 burst during sync). Prefers the offer whose normalized title
+ * matches; falls back to the namespace's first offer. Null when unresolvable
+ * (the caller decides on a search-page fallback and skips caching it).
+ */
+export async function resolveEpicStoreUrl(ns: string, title: string): Promise<string | null> {
+  try {
+    const { country, locale } = region('en');
+    const resp = await graphql(OFFERS_QUERY, { ns, country, locale });
+    const elements = resp?.data?.Catalog?.catalogOffers?.elements ?? [];
+    const el = pickElement(elements, title) ?? elements[0] ?? null;
+    return (el ? mapElement(el).storeUrl : null) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Epic offer details for a game: by namespace when known (library games),
  * otherwise a title search with exact normalized-title matching. Returns null
  * when nothing convincingly matches. Cached (null results too — a game absent
@@ -274,11 +301,24 @@ export async function epicStoreDetails(
   ns: string | null,
   lang: string
 ): Promise<EpicDetails | null> {
-  const { country, locale } = await region(lang);
+  const { country, locale } = region(lang);
   const key = `epic:${lang}:${country}:${ns ?? ''}:${normalize(title)}`;
-  const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < getStoreCacheTtlMs()) return hit.data;
+  try {
+    return await cached(NS, key, getStoreCacheTtlMs(), () =>
+      fetchDetails(title, ns, country, locale)
+    );
+  } catch {
+    return null; // transient (throttling etc.) — not cached, retried next visit
+  }
+}
 
+/** Resolves the offer; throws on transient failures so they aren't cached. */
+async function fetchDetails(
+  title: string,
+  ns: string | null,
+  country: string,
+  locale: string
+): Promise<EpicDetails | null> {
   let data: EpicDetails | null = null;
 
   let sawErrors = false;
@@ -293,17 +333,13 @@ export async function epicStoreDetails(
     }
   }
   if (!data) {
-    try {
-      const resp = await graphql(SEARCH_QUERY, { keywords: title, country, locale });
-      if (resp?.errors?.length && !resp?.data) sawErrors = true;
-      const el = pickElement(resp?.data?.Catalog?.searchStore?.elements ?? [], title);
-      if (el) data = mapElement(el);
-    } catch {
-      return null; // transient (throttling etc.) — not cached, retried next visit
-    }
+    const resp = await graphql(SEARCH_QUERY, { keywords: title, country, locale });
+    if (resp?.errors?.length && !resp?.data) sawErrors = true;
+    const el = pickElement(resp?.data?.Catalog?.searchStore?.elements ?? [], title);
+    if (el) data = mapElement(el);
   }
   // A GraphQL-level failure isn't a legit "not on EGS" — don't cache it.
-  if (!data && sawErrors) return null;
+  if (!data && sawErrors) throw new Error('Epic GraphQL degraded');
 
   if (data) {
     // Rating + gallery enrichment (parallel, best effort).
@@ -317,6 +353,5 @@ export async function epicStoreDetails(
     }
   }
 
-  cache.set(key, { at: Date.now(), data });
   return data;
 }

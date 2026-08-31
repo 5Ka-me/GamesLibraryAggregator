@@ -11,18 +11,19 @@
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "fetch:legendary": "node scripts/fetch-legendary.mjs",
-    "package": "electron-vite build && electron-builder --win"
-  },
-  "dependencies": {
-    "@app/shared": "*"
+    "package": "electron-vite build && electron-builder --win --publish never",
+    "gen:icon": "node scripts/generate-icon.mjs",
+    "release": "electron-vite build && electron-builder --win --publish always"
   },
   "devDependencies": {
+    "@app/shared": "*",
     "@types/node": "^22.9.0",
     "@types/react": "^19.2.9",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^4.3.4",
-    "electron": "^33.2.0",
+    "electron": "33.4.11",
     "electron-builder": "^25.1.8",
+    "electron-updater": "^6.8.9",
     "electron-vite": "^2.3.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",

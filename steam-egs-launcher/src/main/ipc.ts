@@ -1,20 +1,22 @@
 import { app, ipcMain, shell } from 'electron';
 import { apiFetch, ApiRequestInit } from './services/apiClient';
-import { clearToken, getToken, setToken } from './services/secretStore';
-import {
-  getApiBase,
-  setApiBase,
-  getInstallBasePath,
-  setInstallBasePath,
-} from './config';
+import { getBridgeEnabled, setBridgeEnabled, getInstallBasePath, setInstallBasePath } from './config';
+import { bridgeStatus, revokeBridgeOrigin, startBridge, stopBridge } from './services/bridge';
 import { openDeepLink, openSteamStorePage } from './services/steamLauncher';
 import * as legendary from './services/legendary';
 import { login as epicLogin } from './services/epicAuth';
 import { epicStoreDetails } from './services/epicStore';
 import { usdRate } from './services/fxRates';
 import { steamLogin, steamStatus, steamLogout } from './services/steamAuth';
-import { personalSections } from './services/steamPersonal';
+import {
+  personalSections,
+  generateDiscoveryQueue,
+  addToWishlist,
+  removeFromWishlist,
+} from './services/steamPersonal';
 import { scanInstalledSteamAppIds } from './services/steamScan';
+import { appVersion, checkForUpdates, installUpdate, updateState } from './services/updater';
+import { isWebUrl, requireAppId, requireEpicAppName } from './services/validate';
 import {
   storeHome,
   storeSearch,
@@ -25,30 +27,52 @@ import {
   findSteamAppId,
 } from './services/steamStore';
 
+// IPC surface exposed to the renderer through the preload bridge. Arguments
+// arrive as plain values — TypeScript types are erased at runtime — so
+// anything that reaches a shell command, an authenticated Steam request or the
+// OS shell is validated here (see services/validate.ts).
+
 /** Registers all IPC handlers. Called once after the app is ready. */
 export function registerIpc(): void {
-  // Backend API proxy (main process owns the token; no CORS).
+  // Local API (library, accounts, syncs) — same /api/* contract the backend
+  // used to serve, now implemented in-process.
   ipcMain.handle('api:fetch', (_e, path: string, init?: ApiRequestInit) => apiFetch(path, init));
 
-  // Opening links.
-  ipcMain.handle('external:open', (_e, url: string) => shell.openExternal(url));
+  // Opening links. Only http(s) reaches the OS browser: shell.openExternal
+  // would otherwise happily launch file://, UNC paths or protocol handlers,
+  // and store payloads (spotlight banners, EGS slugs) are remote data.
+  ipcMain.handle('external:open', (_e, url: string) => {
+    if (!isWebUrl(url)) throw new Error(`Refusing to open a non-web URL: ${String(url)}`);
+    return shell.openExternal(url);
+  });
   ipcMain.handle('deeplink:open', (_e, url: string) => openDeepLink(url));
 
   // Quit the app (sidebar close button).
   ipcMain.handle('app:quit', () => app.quit());
 
-  // Workspace token (OS keystore).
-  ipcMain.handle('workspace:getToken', () => getToken());
-  ipcMain.handle('workspace:setToken', (_e, token: string) => setToken(token));
-  ipcMain.handle('workspace:clearToken', () => clearToken());
-
-  // API base URL config.
-  ipcMain.handle('config:getApiBase', () => getApiBase());
-  ipcMain.handle('config:setApiBase', (_e, url: string) => setApiBase(url));
+  // Auto-update (GitHub Releases; no-ops in dev).
+  ipcMain.handle('app:version', () => appVersion());
+  ipcMain.handle('update:state', () => updateState());
+  ipcMain.handle('update:check', () => checkForUpdates());
+  ipcMain.handle('update:install', () => installUpdate());
 
   // EGS install folder (legendary --base-path).
   ipcMain.handle('config:getInstallPath', () => getInstallBasePath());
   ipcMain.handle('config:setInstallPath', (_e, path: string) => setInstallBasePath(path));
+
+  // Local web bridge (Settings panel).
+  ipcMain.handle('bridge:status', () => bridgeStatus(getBridgeEnabled()));
+  ipcMain.handle('bridge:setEnabled', async (_e, enabled: boolean) => {
+    const on = !!enabled;
+    setBridgeEnabled(on);
+    if (on) await startBridge();
+    else await stopBridge();
+    return bridgeStatus(on);
+  });
+  ipcMain.handle('bridge:revoke', (_e, origin: string) => {
+    revokeBridgeOrigin(String(origin));
+    return bridgeStatus(getBridgeEnabled());
+  });
 
   // Steam install-state (read from Steam's appmanifest files).
   ipcMain.handle('steam:listInstalled', () => scanInstalledSteamAppIds());
@@ -60,22 +84,29 @@ export function registerIpc(): void {
     wishlistEntries(steamId, !!force)
   );
   ipcMain.handle('store:itemsMeta', (_e, appids: number[], lang: string) =>
-    itemsMeta(appids, lang)
+    itemsMeta((appids ?? []).map(requireAppId), lang)
   );
   ipcMain.handle(
     'store:section',
     (_e, id: string, lang: string, start: number, count: number, sort?: string) =>
       storeSection(id, lang, start, count, (sort as never) ?? 'default')
   );
-  ipcMain.handle('store:appDetails', (_e, appid: number, lang: string) => appDetails(appid, lang));
+  ipcMain.handle('store:appDetails', (_e, appid: number, lang: string) =>
+    appDetails(requireAppId(appid), lang)
+  );
   ipcMain.handle('store:personal', (_e, lang: string, force?: boolean) =>
     personalSections(lang, !!force)
+  );
+  ipcMain.handle('steam:discoveryQueue', (_e, lang: string) => generateDiscoveryQueue(lang));
+  ipcMain.handle('steam:addToWishlist', (_e, appid: number) => addToWishlist(requireAppId(appid)));
+  ipcMain.handle('steam:removeFromWishlist', (_e, appid: number) =>
+    removeFromWishlist(requireAppId(appid))
   );
   ipcMain.handle('store:findApp', (_e, title: string, lang: string) => findSteamAppId(title, lang));
   ipcMain.handle('epic:storeDetails', (_e, title: string, ns: string | null, lang: string) =>
     epicStoreDetails(title, ns, lang)
   );
-  ipcMain.handle('store:openPage', (_e, appid: number) => openSteamStorePage(appid));
+  ipcMain.handle('store:openPage', (_e, appid: number) => openSteamStorePage(requireAppId(appid)));
 
   // Daily USD exchange rate (approximate cross-currency price comparison).
   ipcMain.handle('fx:usdRate', (_e, currency: string) => usdRate(currency));
@@ -85,16 +116,23 @@ export function registerIpc(): void {
   ipcMain.handle('steam:status', () => steamStatus());
   ipcMain.handle('steam:logout', () => steamLogout());
 
-  // EGS embedded OAuth (authenticates legendary + syncs the cloud library).
+  // EGS embedded OAuth (authenticates legendary + syncs the library).
   ipcMain.handle('epic:login', () => epicLogin());
 
-  // legendary (EGS download management).
+  // legendary (EGS download management). appName goes to a spawned CLI as an
+  // argument — validated so it can't be read as a flag.
   ipcMain.handle('legendary:available', () => legendary.isLegendaryAvailable());
   ipcMain.handle('legendary:listInstalled', () => legendary.listInstalled());
   ipcMain.handle('legendary:install', (_e, appName: string, title?: string) =>
-    legendary.install(appName, title)
+    legendary.install(requireEpicAppName(appName), title)
   );
-  ipcMain.handle('legendary:cancel', (_e, appName: string) => legendary.cancelInstall(appName));
-  ipcMain.handle('legendary:uninstall', (_e, appName: string) => legendary.uninstall(appName));
-  ipcMain.handle('legendary:launch', (_e, appName: string) => legendary.launch(appName));
+  ipcMain.handle('legendary:cancel', (_e, appName: string) =>
+    legendary.cancelInstall(requireEpicAppName(appName))
+  );
+  ipcMain.handle('legendary:uninstall', (_e, appName: string) =>
+    legendary.uninstall(requireEpicAppName(appName))
+  );
+  ipcMain.handle('legendary:launch', (_e, appName: string) =>
+    legendary.launch(requireEpicAppName(appName))
+  );
 }

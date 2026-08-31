@@ -1,7 +1,7 @@
 import { app } from 'electron';
 import { spawn, ChildProcessWithoutNullStreams } from 'child_process';
 import { existsSync } from 'fs';
-import { join } from 'path';
+import { isAbsolute, join } from 'path';
 import { emit } from './events';
 import { getInstallBasePath } from '../config';
 
@@ -12,7 +12,7 @@ import { getInstallBasePath } from '../config';
 const CLIENT_BINARY = process.platform === 'win32' ? 'legendary.exe' : 'legendary';
 
 /** Absolute path to the bundled legendary binary (dev vs packaged). */
-export function legendaryPath(): string {
+function legendaryPath(): string {
   return app.isPackaged
     ? join(process.resourcesPath, 'bin', CLIENT_BINARY)
     : join(app.getAppPath(), 'resources', 'bin', CLIENT_BINARY);
@@ -78,15 +78,6 @@ export async function auth(authorizationCode: string): Promise<void> {
   if (code !== 0) throw new Error(stderr.trim() || `legendary auth failed (${code})`);
 }
 
-export async function isAuthenticated(): Promise<boolean> {
-  try {
-    const status = await runJson<{ account?: string | null }>(['status']);
-    return !!status.account && status.account !== 'Not logged in';
-  } catch {
-    return false;
-  }
-}
-
 // ===================== Library / installed =====================
 
 export interface InstalledGame {
@@ -118,9 +109,15 @@ export function install(appName: string, title?: string): void {
 
   emit('legendary:progress', { appName, title, pct: 0, status: 'running' });
 
-  const basePath = getInstallBasePath();
   const args = ['install', appName, '--yes'];
-  if (basePath) args.push('--base-path', basePath);
+  // Only an absolute, existing folder is passed through — a relative or bogus
+  // value would be read by legendary as another flag or silently ignored.
+  const basePath = getInstallBasePath();
+  if (basePath && isAbsolute(basePath) && existsSync(basePath)) {
+    args.push('--base-path', basePath);
+  } else if (basePath) {
+    console.warn(`[legendary] ignoring install folder (not an existing absolute path): ${basePath}`);
+  }
 
   const child = spawn(legendaryPath(), args, { env: legendaryEnv() });
   running.set(appName, child);

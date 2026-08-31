@@ -2,16 +2,14 @@ import { app } from 'electron';
 import { join } from 'path';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 
-// Base URL of the .NET API the launcher talks to. Overridable via env or the
-// Settings page; persisted (unencrypted — it isn't a secret) in userData.
-const DEFAULT_API_BASE = 'http://localhost:5080';
-
+// Non-secret launcher settings, persisted as plain JSON in userData.
 const configFile = (): string => join(app.getPath('userData'), 'launcher-config.json');
 
 interface LauncherConfig {
-  apiBase?: string;
   /** Base folder where legendary installs EGS games (empty = legendary default). */
   installBasePath?: string;
+  /** Local web bridge (127.0.0.1 read-only API); on by default. */
+  bridgeEnabled?: boolean;
 }
 
 function read(): LauncherConfig {
@@ -26,24 +24,26 @@ function write(cfg: LauncherConfig): void {
   writeFileSync(configFile(), JSON.stringify(cfg, null, 2), 'utf8');
 }
 
-export function getApiBase(): string {
-  return process.env.LAUNCHER_API_BASE || read().apiBase || DEFAULT_API_BASE;
-}
-
-export function setApiBase(url: string): void {
-  const cfg = read();
-  cfg.apiBase = url.trim();
-  write(cfg);
-}
-
 /**
- * TTL for the in-memory Steam-store cache (front page, wishlist, item
- * metadata, search). One knob for everything: LAUNCHER_STORE_CACHE_TTL in
- * seconds, default 300. The ↻ button bypasses the cache regardless.
+ * TTL of the "dynamic" cache class — anything carrying prices/discounts
+ * (front page, sections, search, item metadata, details, EGS offers).
+ * Stale entries are still served instantly and refreshed in the background
+ * (see services/cache.ts); the ↻ button bypasses the cache regardless.
+ * Knob: LAUNCHER_STORE_CACHE_TTL in seconds, default 3600.
  */
 export function getStoreCacheTtlMs(): number {
   const sec = parseInt(process.env.LAUNCHER_STORE_CACHE_TTL ?? '', 10);
-  return (Number.isFinite(sec) && sec > 0 ? sec : 300) * 1000;
+  return (Number.isFinite(sec) && sec > 0 ? sec : 3600) * 1000;
+}
+
+export function getBridgeEnabled(): boolean {
+  return read().bridgeEnabled ?? true;
+}
+
+export function setBridgeEnabled(enabled: boolean): void {
+  const cfg = read();
+  cfg.bridgeEnabled = enabled;
+  write(cfg);
 }
 
 export function getInstallBasePath(): string {

@@ -10,6 +10,7 @@ import {
   type Lang,
 } from '@app/shared';
 import { useLegendary } from '../legendary/LegendaryProvider';
+import type { BridgeStatus, UpdateState } from '../../../preload';
 
 const card: React.CSSProperties = {
   border: '1px solid var(--border)',
@@ -34,42 +35,6 @@ const syncBtn: React.CSSProperties = {
   background: 'var(--accent)',
   color: 'var(--on-accent)',
   borderColor: 'transparent',
-};
-
-// ---- Backend URL (launcher-specific: persisted in the main process) ----
-const ApiBasePanel: React.FC = () => {
-  const [value, setValue] = useState('');
-  const [saved, setSaved] = useState(false);
-
-  useEffect(() => {
-    window.launcher.getApiBase().then(setValue);
-  }, []);
-
-  const save = async () => {
-    await window.launcher.setApiBase(value.trim());
-    setSaved(true);
-    setTimeout(() => window.location.reload(), 600); // reload to talk to the new backend
-  };
-
-  return (
-    <div style={card}>
-      <h3 style={{ marginTop: 0 }}>Backend URL</h3>
-      <p style={{ margin: '4px 0 10px', color: 'var(--muted)' }}>
-        Address of the aggregator API this launcher talks to.
-      </p>
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <input
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          placeholder="http://localhost:5080"
-          style={{ flex: 1, minWidth: 260 }}
-        />
-        <button style={btn} onClick={save} disabled={!value.trim()}>
-          {saved ? '✅' : 'Save'}
-        </button>
-      </div>
-    </div>
-  );
 };
 
 // ---- Appearance: theme + language (moved off the old header) ----
@@ -158,24 +123,42 @@ const RegionsPanel: React.FC<{
 
 // ---- EGS install folder (passed to legendary as --base-path) ----
 const InstallPathPanel: React.FC = () => {
+  const { t } = useI18n();
   const [value, setValue] = useState('');
-  const [saved, setSaved] = useState(false);
+  const [status, setStatus] = useState<'idle' | 'saved' | 'error'>('idle');
 
   useEffect(() => {
-    window.launcher.getInstallPath().then(setValue);
+    let alive = true;
+    window.launcher
+      .getInstallPath()
+      .then((p) => alive && setValue(p))
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
   }, []);
 
+  // The reset timer is cleared on unmount so it can't set state on a gone component.
+  useEffect(() => {
+    if (status === 'idle') return;
+    const timer = setTimeout(() => setStatus('idle'), 1600);
+    return () => clearTimeout(timer);
+  }, [status]);
+
   const save = async () => {
-    await window.launcher.setInstallPath(value.trim());
-    setSaved(true);
-    setTimeout(() => setSaved(false), 1200);
+    try {
+      await window.launcher.setInstallPath(value.trim());
+      setStatus('saved');
+    } catch {
+      setStatus('error');
+    }
   };
 
   return (
     <div style={card}>
       <h3 style={{ marginTop: 0 }}>EGS install folder</h3>
       <p style={{ margin: '4px 0 10px', color: 'var(--muted)' }}>
-        Where legendary installs Epic games. Leave empty for legendary's default.
+        Where legendary installs Epic games. Leave empty for legendary&apos;s default.
       </p>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         <input
@@ -185,81 +168,153 @@ const InstallPathPanel: React.FC = () => {
           style={{ flex: 1, minWidth: 260 }}
         />
         <button style={btn} onClick={save}>
-          {saved ? '✅' : 'Save'}
+          {status === 'saved' ? '✅' : status === 'error' ? `⚠️ ${t('common.error')}` : 'Save'}
         </button>
       </div>
     </div>
   );
 };
 
-// ---- Workspace token (launcher-specific: stored in the OS keystore) ----
-const WorkspaceTokenPanel: React.FC = () => {
+// ---- Auto-update (GitHub Releases; inert in dev builds) ----
+const UpdatesPanel: React.FC = () => {
   const { t } = useI18n();
-  const [token, setToken] = useState('');
-  const [shown, setShown] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const [incoming, setIncoming] = useState('');
+  const [version, setVersion] = useState('');
+  const [state, setState] = useState<UpdateState>({ status: 'idle' });
+  const [checked, setChecked] = useState(false);
 
   useEffect(() => {
-    window.launcher.getToken().then((tk) => setToken(tk ?? ''));
+    window.launcher.appVersion().then(setVersion).catch(() => undefined);
+    window.launcher.updateStatus().then(setState).catch(() => undefined);
+    return window.launcher.onUpdateState(setState);
   }, []);
 
-  const copy = async () => {
+  const check = async () => {
+    setChecked(true);
     try {
-      await navigator.clipboard.writeText(token);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      setState(await window.launcher.updateCheck());
     } catch {
-      /* ignore */
+      /* state arrives via events */
     }
   };
 
-  const apply = async () => {
-    const value = incoming.trim();
-    if (!value) return;
-    await window.launcher.setToken(value);
-    window.location.reload(); // reload to load the new workspace's data
+  const statusLine = (): string | null => {
+    switch (state.status) {
+      case 'checking':
+        return t('update.checking');
+      case 'downloading':
+        return t('update.downloading', { version: state.version, pct: state.pct });
+      case 'ready':
+        return t('update.ready', { version: state.version });
+      case 'error':
+        return checked ? `${t('common.error')}: ${state.message}` : null;
+      default:
+        return checked ? t('update.none') : null;
+    }
   };
-
-  const masked = token ? `${token.slice(0, 6)}${'•'.repeat(Math.max(0, token.length - 6))}` : '—';
 
   return (
     <div style={card}>
-      <h3 style={{ marginTop: 0 }}>{t('ws.title')}</h3>
-      <p style={{ margin: '4px 0 10px', color: 'var(--muted)' }}>{t('ws.desc')}</p>
-
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <code
-          style={{
-            flex: 1,
-            minWidth: 240,
-            wordBreak: 'break-all',
-            background: 'var(--panel-2)',
-            padding: '8px 10px',
-            borderRadius: 6,
-          }}
-        >
-          {shown ? token || '—' : masked}
-        </code>
-        <button style={btn} onClick={() => setShown((s) => !s)}>
-          {shown ? t('ws.hide') : t('ws.show')}
-        </button>
-        <button style={btn} onClick={copy} disabled={!token}>
-          {copied ? t('ws.copied') : t('ws.copy')}
-        </button>
+      <h3 style={{ marginTop: 0 }}>{t('update.title')}</h3>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <span style={{ color: 'var(--muted)', fontSize: 13 }}>
+          {t('update.version', { version: version || '—' })}
+        </span>
+        {state.status === 'ready' ? (
+          <button style={syncBtn} onClick={() => void window.launcher.updateInstall()}>
+            {t('update.restart')}
+          </button>
+        ) : (
+          <button style={btn} disabled={state.status === 'checking'} onClick={check}>
+            {t('update.check')}
+          </button>
+        )}
       </div>
+      {statusLine() && (
+        <p style={{ margin: '10px 0 0', color: 'var(--muted)', fontSize: 13 }}>{statusLine()}</p>
+      )}
+    </div>
+  );
+};
 
-      <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
-        <input
-          placeholder={t('ws.useExisting')}
-          value={incoming}
-          onChange={(e) => setIncoming(e.target.value)}
-          style={{ flex: 1, minWidth: 240 }}
-        />
-        <button style={btn} onClick={apply} disabled={!incoming.trim()}>
-          {t('ws.apply')}
-        </button>
-      </div>
+// ---- Local web bridge (127.0.0.1 read-only API for the web app) ----
+const BridgePanel: React.FC = () => {
+  const { t } = useI18n();
+  const [status, setStatus] = useState<BridgeStatus | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // Every call goes through here so a failure shows up instead of silently
+  // leaving the panel blank or the checkbox out of sync with the main process.
+  const apply = useCallback(async (call: () => Promise<BridgeStatus>) => {
+    setError(null);
+    try {
+      setStatus(await call());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
+  useEffect(() => {
+    void apply(() => window.launcher.bridgeStatus());
+  }, [apply]);
+
+  return (
+    <div style={card}>
+      <h3 style={{ marginTop: 0 }}>{t('bridge.title')}</h3>
+      <p style={{ margin: '4px 0 10px', color: 'var(--muted)', fontSize: 13 }}>{t('bridge.desc')}</p>
+
+      {error && <p style={{ color: '#ff6b6b' }}>{t('common.error')}: {error}</p>}
+
+      {status && (
+        <>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={status.enabled}
+              onChange={(e) => {
+                const enabled = e.target.checked;
+                void apply(() => window.launcher.bridgeSetEnabled(enabled));
+              }}
+            />
+            {t('bridge.enabled')}
+            {status.running && (
+              <span style={{ color: 'var(--muted)', fontSize: 12 }}>
+                · {t('bridge.listening', { port: status.port })}
+              </span>
+            )}
+          </label>
+
+          <div style={{ marginTop: 12 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>{t('bridge.paired')}</div>
+            {status.origins.length === 0 && (
+              <p style={{ margin: 0, color: 'var(--muted)', fontSize: 13 }}>{t('bridge.none')}</p>
+            )}
+            {status.origins.map((origin) => (
+              <div
+                key={origin}
+                style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}
+              >
+                <code
+                  style={{
+                    flex: 1,
+                    minWidth: 200,
+                    background: 'var(--panel-2)',
+                    padding: '4px 8px',
+                    borderRadius: 6,
+                  }}
+                >
+                  {origin}
+                </code>
+                <button
+                  style={btn}
+                  onClick={() => void apply(() => window.launcher.bridgeRevoke(origin))}
+                >
+                  {t('bridge.revoke')}
+                </button>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 };
@@ -275,7 +330,10 @@ const SettingsPage: React.FC = () => {
   const [steamLoggedIn, setSteamLoggedIn] = useState(false);
 
   useEffect(() => {
-    window.launcher.steamStatus().then((s) => setSteamLoggedIn(s.loggedIn));
+    window.launcher
+      .steamStatus()
+      .then((s) => setSteamLoggedIn(s.loggedIn))
+      .catch(() => setSteamLoggedIn(false));
   }, []);
 
   const loadAccounts = useCallback(async () => {
@@ -325,9 +383,33 @@ const SettingsPage: React.FC = () => {
   };
 
   const steamWebLogout = async () => {
-    await window.launcher.steamLogout();
-    setSteamLoggedIn(false);
-    setMsg(`✅ ${t('steam.signedOut')}`);
+    setBusy('steamLogout');
+    setMsg(null);
+    try {
+      await window.launcher.steamLogout();
+      setSteamLoggedIn(false);
+      setMsg(`✅ ${t('steam.signedOut')}`);
+      // Signing out clears the stored account and library — reflect that here.
+      await loadAccounts();
+    } catch (e) {
+      setMsg(`${t('common.error')}: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const epicSignOut = async () => {
+    setBusy('epicLogout');
+    setMsg(null);
+    try {
+      await api.logoutEpic();
+      setMsg(`✅ ${t('epic.signedOut')}`);
+      await loadAccounts();
+    } catch (e) {
+      setMsg(`${t('common.error')}: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(null);
+    }
   };
 
   const embeddedEpicLogin = async () => {
@@ -372,9 +454,9 @@ const SettingsPage: React.FC = () => {
 
       <AppearancePanel />
       <RegionsPanel steam={steam} epic={epic} onChanged={loadAccounts} />
-      <ApiBasePanel />
       <InstallPathPanel />
-      <WorkspaceTokenPanel />
+      <BridgePanel />
+      <UpdatesPanel />
 
       <div style={card}>
         <h3 style={{ marginTop: 0 }}>{t('settings.steam')}</h3>
@@ -400,7 +482,7 @@ const SettingsPage: React.FC = () => {
         </label>
         <p style={{ margin: '8px 0 0', color: 'var(--muted)', fontSize: 13 }}>{t('steam.webLoginDesc')}</p>
 
-        {/* Fallback: manual API key + SteamID (also the path for the web app). */}
+        {/* Fallback: manual API key + SteamID (works without a Steam sign-in). */}
         <details style={{ marginTop: 14 }}>
           <summary style={{ cursor: 'pointer', color: 'var(--muted)' }}>{t('steam.advanced')}</summary>
           <div style={{ marginTop: 10 }}>
@@ -421,13 +503,18 @@ const SettingsPage: React.FC = () => {
           <p style={{ margin: '4px 0 12px', color: '#e0a458' }}>⚠️ {t('epic.legendaryMissing')}</p>
         )}
 
-        {/* Preferred: embedded OAuth (authorizes legendary + syncs the library). */}
+        {/* Preferred: embedded OAuth (syncs the library + authorizes legendary). */}
         <button style={syncBtn} disabled={busy !== null} onClick={embeddedEpicLogin}>
           {busy === 'epicLogin' ? t('settings.syncing') : t('epic.embeddedLogin')}
         </button>
+        {epic?.connected && (
+          <button style={{ ...btn, marginLeft: 8 }} disabled={busy !== null} onClick={epicSignOut}>
+            {t('epic.signOut')}
+          </button>
+        )}
         <p style={{ margin: '8px 0 0', color: 'var(--muted)', fontSize: 13 }}>{t('epic.embeddedDesc')}</p>
 
-        {/* Fallback: manual code paste (routed to the cloud API). */}
+        {/* Fallback: manual code paste (handled by the local API router). */}
         <details style={{ marginTop: 14 }}>
           <summary style={{ cursor: 'pointer', color: 'var(--muted)' }}>{t('epic.variantManual')}</summary>
           <div style={{ marginTop: 10 }}>

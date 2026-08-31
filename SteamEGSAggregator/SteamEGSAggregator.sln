@@ -5,8 +5,6 @@ VisualStudioVersion = 17.14.36408.4 d17.14
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SteamEGSAggregator", "SteamEGSAggregator\SteamEGSAggregator.csproj", "{5B89CA63-F822-400C-89E2-F4AEF5160C4C}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SteamEGSAggregator.Application", "Application\SteamEGSAggregator.Application.csproj", "{09D4EA04-A178-4F3C-A318-9EC55A865614}"
-EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -17,10 +15,6 @@ Global
 		{5B89CA63-F822-400C-89E2-F4AEF5160C4C}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{5B89CA63-F822-400C-89E2-F4AEF5160C4C}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{5B89CA63-F822-400C-89E2-F4AEF5160C4C}.Release|Any CPU.Build.0 = Release|Any CPU
-		{09D4EA04-A178-4F3C-A318-9EC55A865614}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{09D4EA04-A178-4F3C-A318-9EC55A865614}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{09D4EA04-A178-4F3C-A318-9EC55A865614}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{09D4EA04-A178-4F3C-A318-9EC55A865614}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

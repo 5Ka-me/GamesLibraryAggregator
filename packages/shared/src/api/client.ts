@@ -1,7 +1,7 @@
 // Shared API client. The low-level transport is injectable so the same `api`
-// surface works both in the browser (direct HTTP + workspace token in
-// localStorage) and inside the Electron launcher (calls proxied to the main
-// process, which owns the token and talks to the .NET API without CORS).
+// surface works both in the browser (direct HTTP to the web backend, session
+// cookie auth) and inside the Electron launcher (calls proxied over IPC to the
+// main process, which implements the same contract locally).
 
 import type { Source } from '../sources';
 
@@ -97,53 +97,9 @@ export type ApiTransport = <T>(path: string, init?: ApiRequestInit) => Promise<T
 const envBase =
   typeof process !== 'undefined' && process.env ? process.env.REACT_APP_API_URL : undefined;
 
-let API_BASE = envBase ?? 'http://localhost:5080';
+const API_BASE = envBase ?? 'http://localhost:5080';
 
-/** Override the backend base URL at runtime (used by the launcher/tests). */
-export function configureApiBase(url: string): void {
-  API_BASE = url;
-}
-
-// ===================== Workspace token (browser) =====================
-
-const TOKEN_KEY = 'workspaceToken';
-const hasLocalStorage = typeof localStorage !== 'undefined';
-
-export const workspace = {
-  getToken: () => (hasLocalStorage ? localStorage.getItem(TOKEN_KEY) : null),
-  setToken: (t: string) => {
-    if (hasLocalStorage) localStorage.setItem(TOKEN_KEY, t.trim());
-  },
-  clear: () => {
-    if (hasLocalStorage) localStorage.removeItem(TOKEN_KEY);
-  },
-};
-
-// ===================== Default HTTP transport =====================
-
-let creating: Promise<string> | null = null;
-
-async function ensureToken(): Promise<string> {
-  const existing = workspace.getToken();
-  if (existing) return existing;
-  if (!creating) {
-    creating = fetch(`${API_BASE}/api/workspace`, { method: 'POST' })
-      .then((r) => {
-        if (!r.ok) throw new Error(`workspace create failed: ${r.status}`);
-        return r.json();
-      })
-      .then((d: { token: string }) => {
-        workspace.setToken(d.token);
-        creating = null;
-        return d.token;
-      })
-      .catch((e) => {
-        creating = null;
-        throw e;
-      });
-  }
-  return creating;
-}
+// ===================== Default HTTP transport (browser) =====================
 
 async function parse<T>(res: Response): Promise<T> {
   if (!res.ok) {
@@ -155,28 +111,20 @@ async function parse<T>(res: Response): Promise<T> {
     }
     throw new Error(detail || `${res.status}`);
   }
+  if (res.status === 204) return undefined as T; // No Content (e.g. logout)
   return res.json() as Promise<T>;
 }
 
+// Auth is a signed HTTP-only session cookie set by the Steam OpenID sign-in —
+// nothing to attach here beyond credentials.
 const httpTransport: ApiTransport = async <T>(path: string, init: ApiRequestInit = {}): Promise<T> => {
-  const run = async (retry: boolean): Promise<T> => {
-    const token = await ensureToken();
-    const headers = new Headers(init.headers);
-    headers.set('X-Workspace-Token', token);
-
-    const res = await fetch(`${API_BASE}${path}`, {
-      method: init.method,
-      body: init.body,
-      headers,
-    });
-    if (res.status === 401 && retry) {
-      // The token is no longer valid (e.g. the DB was recreated) — recreate and retry once.
-      workspace.clear();
-      return run(false);
-    }
-    return parse<T>(res);
-  };
-  return run(true);
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: init.method,
+    body: init.body,
+    headers: init.headers,
+    credentials: 'include',
+  });
+  return parse<T>(res);
 };
 
 let transport: ApiTransport = httpTransport;
@@ -194,8 +142,28 @@ const postJson = <T,>(path: string, body?: unknown) =>
     body: body ? JSON.stringify(body) : undefined,
   });
 
+/** Who am I (web session). */
+export interface Me {
+  authenticated: boolean;
+  steamId?: string | null;
+  personaName?: string | null;
+}
+
+/** The backend's Steam OpenID sign-in entry point (browser navigation target). */
+export function steamLoginUrl(): string {
+  return `${API_BASE}/auth/steam/login`;
+}
+
 export const api = {
   getCombinedLibrary: () => getJson<Game[]>('/api/library'),
+
+  // Web session (browser only; the launcher is its own auth world).
+  getMe: () => getJson<Me>('/api/me'),
+  logout: () => postJson<void>('/auth/logout'),
+
+  // ---- Launcher-only below ----
+  // These are served by the launcher's in-process router (IPC transport), NOT
+  // by the web backend — calling them from the browser would 404.
 
   // Steam
   getSteamAccount: () => getJson<SteamAccount>('/api/steam/account'),
@@ -216,6 +184,7 @@ export const api = {
     postJson<EpicAuthResult>('/api/epic/auth', { authorizationCode }),
   importEpicLauncher: () => postJson<EpicAuthResult>('/api/epic/import-launcher'),
   syncEpic: () => postJson<EpicAuthResult>('/api/epic/sync'),
+  logoutEpic: () => postJson<void>('/api/epic/logout'),
   setEpicRegion: (country: string) => postJson<EpicAccount>('/api/epic/region', { country }),
   resolveEpicStoreUrl: (ns: string, title: string) =>
     getJson<{ url: string }>(

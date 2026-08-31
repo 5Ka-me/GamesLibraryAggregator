@@ -15,7 +15,7 @@ import {
   type SteamGameAchievements,
 } from '@app/shared';
 import type { EpicDetails, GameDetails } from '../../../preload';
-import { ctl } from '../store/parts';
+import { ctl, formatCents } from '../store/parts';
 import ScreenshotViewer, { type ViewerShot } from '../components/ScreenshotViewer';
 
 // Unified game page. Reached from the store (/store/app/:appid) or from a
@@ -52,10 +52,6 @@ const srcTag = (source: string): React.CSSProperties => ({
   whiteSpace: 'nowrap',
 });
 
-function formatCents(cents: number | null | undefined, currency?: string): string | null {
-  if (cents == null) return null;
-  return `${(cents / 100).toFixed(2)} ${currency ?? ''}`.trim();
-}
 
 const MetaRow: React.FC<{ label: string; value?: string | null }> = ({ label, value }) =>
   value ? (
@@ -436,10 +432,19 @@ const AchievementsBlock: React.FC<{ appid: number }> = ({ appid }) => {
   const [revealed, setRevealed] = useState<Set<string>>(new Set());
 
   useEffect(() => {
+    // Reset first: without it the previous game's achievements stay on screen
+    // while the new ones load, and one failure would stick forever.
+    let alive = true;
+    setData(null);
+    setFailed(false);
+    setRevealed(new Set());
     api
       .getSteamAchievements(appid, lang)
-      .then(setData)
-      .catch(() => setFailed(true));
+      .then((d) => alive && setData(d))
+      .catch(() => alive && setFailed(true));
+    return () => {
+      alive = false;
+    };
   }, [appid, lang]);
 
   if (failed || (data && !data.available)) {
@@ -556,20 +561,31 @@ const GameDetailsPage: React.FC = () => {
   const [viewer, setViewer] = useState<{ shots: ViewerShot[]; index: number } | null>(null);
 
   useEffect(() => {
+    let alive = true;
     api
       .getCombinedLibrary()
-      .then(setLibrary)
-      .catch(() => setLibrary([]));
+      .then((l) => alive && setLibrary(l))
+      .catch(() => alive && setLibrary([]));
+    return () => {
+      alive = false;
+    };
   }, []);
 
+  // Each async lookup below guards with `alive` so a slower earlier response
+  // can't overwrite the state of the game the user is looking at now.
   useEffect(() => {
+    let alive = true;
     setDetails(null);
     setError(null);
-    if (appid == null) return; // Epic-only game — no Steam storefront data
-    window.launcher
-      .storeAppDetails(appid, lang)
-      .then(setDetails)
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+    if (appid != null) {
+      window.launcher
+        .storeAppDetails(appid, lang)
+        .then((d) => alive && setDetails(d))
+        .catch((e) => alive && setError(e instanceof Error ? e.message : String(e)));
+    }
+    return () => {
+      alive = false;
+    };
   }, [appid, lang]);
 
   // The library game backing this page (for actions & the Epic namespace).
@@ -590,27 +606,44 @@ const GameDetailsPage: React.FC = () => {
   // Games known only from EGS: try to find their Steam version by title so the
   // Steam tab / price comparison work for them too (strict title matching).
   useEffect(() => {
-    if (knownAppid != null || !title) return;
+    if (knownAppid != null) return;
+    // No title yet (library still loading, or it failed) → nothing to look up,
+    // but the lookup must be marked done or the tab would spin forever.
+    if (!title) {
+      setSteamLookupDone(library !== null);
+      return;
+    }
+    let alive = true;
     setSteamLookupDone(false);
     window.launcher
       .storeFindAppId(title, lang)
-      .then(setFoundAppid)
-      .catch(() => setFoundAppid(null))
-      .finally(() => setSteamLookupDone(true));
-  }, [knownAppid, title, lang]);
+      .then((id) => alive && setFoundAppid(id))
+      .catch(() => alive && setFoundAppid(null))
+      .finally(() => alive && setSteamLookupDone(true));
+    return () => {
+      alive = false;
+    };
+  }, [knownAppid, title, lang, library]);
 
   // Epic offer lookup: by namespace for library games, by title otherwise.
   // Runs once the title is known (works for not-owned games too).
   useEffect(() => {
-    if (!title) return;
+    if (!title) {
+      setEpicLoaded(library !== null);
+      return;
+    }
+    let alive = true;
     setEpic(null);
     setEpicLoaded(false);
     window.launcher
       .epicStoreDetails(title, epicEntry?.namespace ?? null, lang)
-      .then(setEpic)
-      .catch(() => setEpic(null))
-      .finally(() => setEpicLoaded(true));
-  }, [title, epicEntry?.namespace, lang]);
+      .then((d) => alive && setEpic(d))
+      .catch(() => alive && setEpic(null))
+      .finally(() => alive && setEpicLoaded(true));
+    return () => {
+      alive = false;
+    };
+  }, [title, epicEntry?.namespace, lang, library]);
 
   // Per-platform availability for the tab switcher. Both tabs are always
   // rendered; a platform where the game genuinely doesn't exist is disabled
@@ -741,6 +774,7 @@ const GameDetailsPage: React.FC = () => {
             <MetaRow label={t('details.developer')} value={details.developers.join(', ') || null} />
             <MetaRow label={t('details.publisher')} value={details.publishers.join(', ') || null} />
             <MetaRow label={t('details.genres')} value={details.genres.join(', ') || null} />
+            <MetaRow label={t('details.tags')} value={details.tags.join(', ') || null} />
             <MetaRow label={t('details.platforms')} value={details.platforms.join(', ') || null} />
             {details.metacritic != null && <MetaRow label={t('details.metacritic')} value={String(details.metacritic)} />}
 

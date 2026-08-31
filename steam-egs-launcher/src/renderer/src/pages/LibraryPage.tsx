@@ -40,6 +40,8 @@ const LibraryPage: React.FC = () => {
 
   useEffect(() => {
     load();
+    // Background autosync (main process) finished → pick up the fresh library.
+    return window.launcher.onLibraryChanged(() => void load());
   }, [load]);
 
   return (

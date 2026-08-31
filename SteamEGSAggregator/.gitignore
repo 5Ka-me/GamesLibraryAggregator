@@ -4,9 +4,7 @@ obj/
 .vs/
 *.user
 
-## Локальные секреты — НЕ коммитить (содержит Steam API key)
+## Local secrets — never commit (holds the server-side Steam API key)
 appsettings.Development.json
 appsettings.*.Local.json
-
-## Docker volume данные (если вдруг окажутся в дереве)
-pgdata/
+.env

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   api,
   useI18n,
@@ -49,7 +49,7 @@ const StatsPage: React.FC = () => {
   const [sel, setSel] = useState<Source[]>(ALL);
   const [recent, setRecent] = useState<SteamRecentGame[] | null>(null);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     api
       .getCombinedLibrary()
       .then(setGames)
@@ -59,6 +59,12 @@ const StatsPage: React.FC = () => {
       .then(setRecent)
       .catch(() => setRecent(null)); // Steam not configured — hide the block
   }, []);
+
+  useEffect(() => {
+    load();
+    // Keep the numbers honest after a background autosync.
+    return window.launcher.onLibraryChanged(load);
+  }, [load]);
 
   const toggle = (s: Source) =>
     setSel((prev) => {

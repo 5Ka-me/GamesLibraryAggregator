@@ -4,8 +4,8 @@ import { configurePlatform, configureTransport, type ApiRequestInit } from '@app
 import App from './App';
 import './index.css';
 
-// Route all backend calls through the main process: it owns the workspace token
-// (in the OS keystore) and talks to the .NET API without CORS restrictions.
+// Route API calls through the main process: it implements the whole `/api/*`
+// contract locally (library, accounts, syncs) and owns every secret.
 configureTransport(<T,>(path: string, init?: ApiRequestInit) =>
   window.launcher.apiFetch<T>(path, init)
 );

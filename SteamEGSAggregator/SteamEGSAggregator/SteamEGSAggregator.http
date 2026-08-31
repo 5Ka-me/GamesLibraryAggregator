@@ -1,6 +1,17 @@
-@SteamEGSAggregator_HostAddress = http://localhost:5109
+@host = http://localhost:5080
 
-GET {{SteamEGSAggregator_HostAddress}}/weatherforecast/
+### Session info (200 with authenticated:false when signed out)
+GET {{host}}/api/me
+Accept: application/json
+
+### Health probe
+GET {{host}}/health
+
+### Steam sign-in — open in a BROWSER, not here (it redirects to Steam)
+# {{host}}/auth/steam/login
+
+### The signed-in user's library (401 without a session cookie)
+GET {{host}}/api/library
 Accept: application/json
 
 ###

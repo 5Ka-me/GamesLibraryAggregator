@@ -3,9 +3,9 @@
 //   1. Add its id to SOURCE_IDS and an entry to SOURCES below (label + color).
 //   2. Define the CSS color variable in both index.css files (web + launcher).
 //   3. Add an install-state resolver in installState.ts (if detectable locally).
-//   4. Backend: extend the GameSource enum + add a sync service (see
-//      EpicGamesService/SteamService for the pattern). DTO `sources` strings
-//      must match the ids here.
+//   4. Launcher: add a sync service under src/main/services (see epicSync.ts /
+//      steamSync.ts) writing entries with this `source` id, and route it in
+//      services/apiClient.ts.
 //
 // GameCard needs no changes for a deep-link-only source — unknown sources
 // automatically fall back to the generic launch/install links branch.

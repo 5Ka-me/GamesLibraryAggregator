@@ -6,12 +6,8 @@
     }
   },
 
-  "ConnectionStrings": {
-    "Default": "Host=localhost;Port=5432;Database=steamegs;Username=postgres;Password=postgres"
-  },
-
-  "Security": {
-    "_comment": "Generate with: openssl rand -base64 32",
-    "EncryptionKey": "REPLACE_WITH_BASE64_32_BYTE_KEY"
+  "Steam": {
+    "_comment": "Your Steam Web API key for local development (steamcommunity.com/dev/apikey).",
+    "ApiKey": "REPLACE_WITH_YOUR_STEAM_API_KEY"
   }
 }

@@ -1,5 +1,11 @@
 import { app, BrowserWindow, session, type Session } from 'electron';
-import { apiFetch } from './apiClient';
+import { storeSteamLibrary } from './steamSync';
+import { clearStore } from './localData';
+import { clearSteamApiKey } from './secretStore';
+import { httpJson } from './http';
+
+/** Official Steam Web API host (shared with steamSync/steamStore). */
+export const STEAM_WEB_API = 'https://api.steampowered.com';
 
 // Secure Steam web sign-in. The user authenticates (password + Steam Guard) on
 // Valve's OWN pages inside an isolated window; we never see or touch the
@@ -34,20 +40,24 @@ interface SteamProfile {
   country?: string;
 }
 
-let cachedToken: { value: string; at: number } | null = null;
+// The Web API token is tied to one signed-in session — cache it per partition
+// so switching accounts can't hand out the previous account's token.
+let cachedToken: { partition: string; value: string; at: number } | null = null;
 const TOKEN_TTL_MS = 30 * 60_000;
+
+const PERSIST_PARTITION = 'persist:steam';
+/** Non-persistent partition — Electron recreates it per app run. */
+const MEMORY_PARTITION = 'steam-mem';
 
 // Partition of the most recent successful login this run (in-memory logins
 // aren't discoverable otherwise).
 let activePartition: string | null = null;
 
-/** In-memory (non-persistent) partition, recreated per app run. */
-function memPartition(): string {
-  return 'steam-mem';
-}
+const partitionName = (remember: boolean): string =>
+  remember ? PERSIST_PARTITION : MEMORY_PARTITION;
 
 function steamSession(remember: boolean): Session {
-  return session.fromPartition(remember ? 'persist:steam' : memPartition());
+  return session.fromPartition(partitionName(remember));
 }
 
 /**
@@ -55,13 +65,16 @@ function steamSession(remember: boolean): Session {
  * isn't signed in. Used by the personalized-store service.
  */
 export async function getActiveSteamSession(): Promise<Session | null> {
-  const names = [...new Set([activePartition, 'persist:steam', memPartition()].filter(Boolean))] as string[];
-  for (const name of names) {
+  for (const name of activePartitionNames()) {
     const ses = session.fromPartition(name);
     if (await readSteamId(ses)) return ses;
   }
   return null;
 }
+
+const activePartitionNames = (): string[] => [
+  ...new Set([activePartition, PERSIST_PARTITION, MEMORY_PARTITION].filter(Boolean) as string[]),
+];
 
 function isSteamUrl(url: string): boolean {
   try {
@@ -76,7 +89,12 @@ function isSteamUrl(url: string): boolean {
 async function readSteamId(ses: Session): Promise<string | null> {
   const cookies = await ses.cookies.get({ name: 'steamLoginSecure' });
   for (const c of cookies) {
-    const decoded = decodeURIComponent(c.value);
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(c.value);
+    } catch {
+      continue; // malformed cookie value — must not throw inside a listener
+    }
     const id = decoded.split('||')[0];
     if (/^\d{17}$/.test(id)) return id;
   }
@@ -127,35 +145,52 @@ function openLogin(remember: boolean): Promise<string> {
     win.webContents.on('will-redirect', guard);
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
-    const check = async () => {
+    const check = (): void => {
       if (settled || win.isDestroyed()) return;
-      const id = await readSteamId(ses);
-      if (id) finish(() => resolve(id));
+      void readSteamId(ses).then((id) => {
+        if (id) finish(() => resolve(id));
+      });
     };
     win.webContents.on('did-navigate', check);
     win.webContents.on('did-frame-navigate', check);
 
     win.on('closed', () => finish(() => reject(new Error('Steam sign-in window was closed.'))));
-    win.loadURL(LOGIN_URL);
+    void win.loadURL(LOGIN_URL);
   });
 }
 
-/** Web API access token from the signed-in store session (memory-cached). */
-async function getAccessToken(remember: boolean): Promise<string | null> {
-  if (cachedToken && Date.now() - cachedToken.at < TOKEN_TTL_MS) return cachedToken.value;
+/** Web API access token for one session partition (memory-cached, 30 min). */
+async function mintToken(ses: Session, partition: string): Promise<string | null> {
+  if (cachedToken?.partition === partition && Date.now() - cachedToken.at < TOKEN_TTL_MS) {
+    return cachedToken.value;
+  }
   try {
-    const res = await steamSession(remember).fetch(
-      'https://store.steampowered.com/pointssummary/ajaxgetasyncconfig'
-    );
+    const res = await ses.fetch('https://store.steampowered.com/pointssummary/ajaxgetasyncconfig');
     if (!res.ok) return null;
     const json = (await res.json()) as { data?: { webapi_token?: string } };
     const token = json?.data?.webapi_token;
     if (!token) return null;
-    cachedToken = { value: token, at: Date.now() };
+    cachedToken = { partition, value: token, at: Date.now() };
     return token;
   } catch {
     return null;
   }
+}
+
+/**
+ * Web API token from whichever Steam session is signed in (silent). Used by
+ * the local Steam services (recent games, achievements) so a web-signed-in
+ * user needs no API key. Null when not signed in.
+ */
+export async function getWebApiToken(): Promise<string | null> {
+  for (const name of activePartitionNames()) {
+    if (cachedToken?.partition === name && Date.now() - cachedToken.at < TOKEN_TTL_MS) {
+      return cachedToken.value;
+    }
+    const ses = session.fromPartition(name);
+    if (await readSteamId(ses)) return mintToken(ses, name);
+  }
+  return null;
 }
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -163,15 +198,14 @@ async function getAccessToken(remember: boolean): Promise<string | null> {
 async function fetchProfile(steamId: string, token: string): Promise<SteamProfile> {
   const profile: SteamProfile = { steamId };
   try {
-    const res = await fetch(
-      `https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/?access_token=${token}&steamids=${steamId}`
+    const json = await httpJson<any>(
+      `${STEAM_WEB_API}/ISteamUser/GetPlayerSummaries/v2/` +
+        `?access_token=${encodeURIComponent(token)}&steamids=${encodeURIComponent(steamId)}`
     );
-    if (res.ok) {
-      const p = (await res.json())?.response?.players?.[0];
-      if (p) {
-        profile.personaName = p.personaname;
-        if (typeof p.loccountrycode === 'string') profile.country = p.loccountrycode;
-      }
+    const p = json?.response?.players?.[0];
+    if (p) {
+      profile.personaName = p.personaname;
+      if (typeof p.loccountrycode === 'string') profile.country = p.loccountrycode;
     }
   } catch {
     /* persona is optional */
@@ -180,12 +214,12 @@ async function fetchProfile(steamId: string, token: string): Promise<SteamProfil
 }
 
 async function fetchOwnedGames(steamId: string, token: string): Promise<any[]> {
-  const res = await fetch(
-    'https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/' +
-      `?access_token=${token}&steamid=${steamId}&include_appinfo=true&include_played_free_games=true&format=json`
+  const json = await httpJson<any>(
+    `${STEAM_WEB_API}/IPlayerService/GetOwnedGames/v1/` +
+      `?access_token=${encodeURIComponent(token)}&steamid=${encodeURIComponent(steamId)}` +
+      '&include_appinfo=true&include_played_free_games=true&format=json'
   );
-  if (!res.ok) throw new Error(`GetOwnedGames failed: HTTP ${res.status}`);
-  return (await res.json())?.response?.games ?? [];
+  return json?.response?.games ?? [];
 }
 
 export interface SteamLoginResult {
@@ -197,13 +231,15 @@ export interface SteamLoginResult {
 }
 
 /**
- * Full sign-in: authenticate → mint token → fetch profile + library → push the
- * library to the cloud DB (no API key involved). Returns a summary.
+ * Full sign-in: authenticate → mint token → fetch profile + library → store
+ * the library locally (no API key involved). Returns a summary.
  */
 export async function steamLogin(remember: boolean): Promise<SteamLoginResult> {
+  // A previous account's token must never be reused for the new sign-in.
+  cachedToken = null;
   const steamId = await openLogin(remember);
-  activePartition = remember ? 'persist:steam' : memPartition();
-  const token = await getAccessToken(remember);
+  activePartition = partitionName(remember);
+  const token = await mintToken(steamSession(remember), activePartition);
   if (!token) {
     return { success: false, message: 'Signed in, but could not obtain a Steam Web API token.' };
   }
@@ -213,20 +249,12 @@ export async function steamLogin(remember: boolean): Promise<SteamLoginResult> {
     fetchOwnedGames(steamId, token),
   ]);
 
-  await apiFetch('/api/steam/sync-games', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      steamId,
-      personaName: profile.personaName,
-      country: profile.country,
-      games: games.map((g) => ({
-        appId: g.appid,
-        name: g.name,
-        playtimeForever: g.playtime_forever ?? 0,
-      })),
-    }),
-  });
+  storeSteamLibrary(
+    steamId,
+    games.map((g) => ({ appId: g.appid, name: g.name, playtimeForever: g.playtime_forever ?? 0 })),
+    profile.personaName,
+    profile.country
+  );
 
   return {
     success: true,
@@ -242,12 +270,21 @@ export async function steamStatus(): Promise<{ loggedIn: boolean; steamId?: stri
   return id ? { loggedIn: true, steamId: id } : { loggedIn: false };
 }
 
-/** Clears the Steam session (cookies + storage) and the in-memory token. */
+/**
+ * Signs out of Steam completely: session cookies, the in-memory token, the
+ * stored account/API key and the Steam half of the library. Leaving any of it
+ * behind used to keep the "signed out" account visible in the UI, served over
+ * the bridge, and re-synced by the background job.
+ */
 export async function steamLogout(): Promise<void> {
   cachedToken = null;
   activePartition = null;
-  await steamSession(true).clearStorageData();
-  await steamSession(false).clearStorageData();
+  await Promise.all([
+    steamSession(true).clearStorageData(),
+    steamSession(false).clearStorageData(),
+  ]);
+  clearSteamApiKey();
+  clearStore('Steam');
 }
 
 // Drop the token from memory when the app quits (defensive).

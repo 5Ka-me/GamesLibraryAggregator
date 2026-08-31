@@ -1,7 +1,16 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api, useI18n } from '@app/shared';
 import type { StoreHome, StoreItem, StoreSection, WishlistEntry, WishlistItem } from '../../../preload';
-import { ctl, ItemCard, SectionBlock, useOwnership } from '../store/parts';
+import {
+  applyOwnedFilter,
+  ctl,
+  hideOwnedStore,
+  ItemCard,
+  PriceTag,
+  SectionBlock,
+  useOwnership,
+} from '../store/parts';
 import { useScrollRestore } from '../hooks/useScrollRestore';
 
 // In-app Steam store: front page (featured + specials + top sellers + new
@@ -10,9 +19,9 @@ import { useScrollRestore } from '../hooks/useScrollRestore';
 //
 // The wishlist renders incrementally (sentinel-driven pages) and hydrates
 // name/price metadata lazily in batches. All storefront data is cached in the
-// main process (LAUNCHER_STORE_CACHE_TTL, default 300 s); ↻ bypasses the cache.
+// main process (LAUNCHER_STORE_CACHE_TTL, default 1 h, SWR); ↻ bypasses the cache.
 
-type Tab = 'home' | 'wishlist';
+type Tab = 'home' | 'wishlist' | 'discovery';
 type WlSort = 'rank' | 'date' | 'name' | 'price' | 'discount';
 
 const WL_PAGE = 50;
@@ -46,11 +55,135 @@ function sectionFallbackName(id: string, tr: (k: string) => string): string {
 // Personalized rows carry the raw tag/game name in `name` — the full heading
 // is localized here.
 function personalTitle(s: StoreSection, tr: (k: string, vars?: Record<string, string>) => string): string {
-  if (s.id === 'personal-discovery') return tr('store.personal.discovery');
+  if (s.id === 'personal-popular-new') return tr('store.personal.popularNew');
   if (s.id.startsWith('personal-tag-')) return tr('store.personal.becauseTag', { tag: s.name });
   if (s.id.startsWith('personal-game-')) return tr('store.personal.becausePlayed', { game: s.name });
   return s.name;
 }
+
+// ---------- Discovery Queue (one game at a time, Steam-style) ----------
+
+// Survives tab switches / navigation; a queue is generated ONLY when the user
+// clicks the button (each generation consumes a queue on the Steam side).
+let savedDq: { items: StoreItem[]; index: number; added: number[] } = {
+  items: [],
+  index: 0,
+  added: [],
+};
+
+const DqImage: React.FC<{ item: StoreItem }> = ({ item }) => {
+  const header = `https://cdn.cloudflare.steamstatic.com/steam/apps/${item.appid}/header.jpg`;
+  const [src, setSrc] = useState(header);
+  useEffect(() => setSrc(header), [header]);
+  return (
+    <img
+      src={src}
+      alt={item.name}
+      onError={() => item.image && src !== item.image && setSrc(item.image)}
+      style={{ width: '100%', maxWidth: 640, borderRadius: 10, display: 'block' }}
+    />
+  );
+};
+
+const DiscoveryView: React.FC = () => {
+  const { t, lang } = useI18n();
+  const navigate = useNavigate();
+  const [items, setItems] = useState<StoreItem[]>(savedDq.items);
+  const [index, setIndex] = useState(savedDq.index);
+  const [added, setAdded] = useState<Set<number>>(new Set(savedDq.added));
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+
+  useEffect(() => {
+    savedDq = { items, index, added: [...added] };
+  }, [items, index, added]);
+
+  const generate = async () => {
+    setBusy(true);
+    setNote(null);
+    try {
+      const queue = await window.launcher.steamDiscoveryQueue(lang);
+      if (!queue.length) setNote(t('store.dq.needLogin'));
+      else {
+        setItems(queue);
+        setIndex(0);
+      }
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const wishlist = async (appid: number) => {
+    setBusy(true);
+    setNote(null);
+    const ok = await window.launcher.steamAddToWishlist(appid).catch(() => false);
+    setBusy(false);
+    if (ok) setAdded((prev) => new Set(prev).add(appid));
+    else setNote(t('store.dq.wishlistFail'));
+  };
+
+  const generateBtn = (
+    <button
+      style={{ ...ctl, background: 'var(--accent)', color: 'var(--on-accent)' }}
+      disabled={busy}
+      onClick={generate}
+    >
+      {busy ? '…' : t('store.dq.start')}
+    </button>
+  );
+
+  const current = items[index];
+
+  return (
+    <div style={{ maxWidth: 680, margin: '0 auto' }}>
+      {items.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: '48px 0' }}>
+          <p style={{ color: 'var(--muted)', marginBottom: 16 }}>{t('store.dq.empty')}</p>
+          {generateBtn}
+        </div>
+      ) : !current ? (
+        <div style={{ textAlign: 'center', padding: '48px 0' }}>
+          <p style={{ color: 'var(--muted)', marginBottom: 16 }}>{t('store.dq.finished')}</p>
+          {generateBtn}
+        </div>
+      ) : (
+        <>
+          <div style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 10 }}>
+            {index + 1} / {items.length}
+          </div>
+          <DqImage item={current} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginTop: 14 }}>
+            <h3 style={{ margin: 0, flex: 1, minWidth: 0 }}>{current.name}</h3>
+            <PriceTag item={current} />
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 14 }}>
+            {added.has(current.appid) ? (
+              <button style={{ ...ctl, opacity: 0.7 }} disabled>
+                ✓ {t('store.dq.inWishlist')}
+              </button>
+            ) : (
+              <button style={ctl} disabled={busy} onClick={() => wishlist(current.appid)}>
+                ＋ {t('store.dq.addWishlist')}
+              </button>
+            )}
+            <button style={ctl} onClick={() => navigate(`/store/app/${current.appid}`)}>
+              {t('store.dq.details')}
+            </button>
+            <button
+              style={{ ...ctl, background: 'var(--accent)', color: 'var(--on-accent)', marginLeft: 'auto' }}
+              onClick={() => setIndex((i) => i + 1)}
+            >
+              {t('store.dq.next')} →
+            </button>
+          </div>
+        </>
+      )}
+      {note && <p style={{ color: 'var(--muted)', marginTop: 14 }}>{note}</p>}
+    </div>
+  );
+};
 
 const StorePage: React.FC = () => {
   const { t, lang } = useI18n();
@@ -69,6 +202,7 @@ const StorePage: React.FC = () => {
   const [homeError, setHomeError] = useState<string | null>(null);
   // Personalized rows (empty when not signed in to Steam).
   const [personal, setPersonal] = useState<StoreSection[]>([]);
+  const [hideOwned, setHideOwned] = useState(hideOwnedStore.get());
 
   // Wishlist: raw entries + lazily hydrated metadata + windowed rendering.
   const [entries, setEntries] = useState<WishlistEntry[] | null>(null);
@@ -78,7 +212,8 @@ const StorePage: React.FC = () => {
   const [wlSort, setWlSort] = useState<WlSort>(savedUi?.wlSort ?? 'rank');
   const [wlDiscountOnly, setWlDiscountOnly] = useState(savedUi?.wlDiscountOnly ?? false);
   const [wlFilter, setWlFilter] = useState(savedUi?.wlFilter ?? '');
-  const inFlight = useRef<Set<number>>(new Set());
+  /** Appids already requested — including ones Steam couldn't resolve. */
+  const attemptedMeta = useRef<Set<number>>(new Set());
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
   // Persist the view state for the next visit.
@@ -87,7 +222,14 @@ const StorePage: React.FC = () => {
   }, [tab, query, results, visible, wlSort, wlDiscountOnly, wlFilter]);
 
   // Scroll restoration: ready once the active view has rendered its content.
-  const scrollReady = results !== null ? true : tab === 'home' ? home !== null : entries !== null;
+  const scrollReady =
+    results !== null
+      ? true
+      : tab === 'home'
+        ? home !== null
+        : tab === 'wishlist'
+          ? entries !== null
+          : true; // discovery renders immediately
   useScrollRestore('store', scrollReady);
 
   useEffect(() => {
@@ -130,12 +272,33 @@ const StorePage: React.FC = () => {
 
   const clearSearch = () => setQuery('');
 
+  // A load in flight; also what keeps the auto-load effect from firing a
+  // second, non-forced request while ↻ is running (they used to race, and the
+  // cached response could win).
+  const wlLoading = useRef(false);
+  const [wlMsg, setWlMsg] = useState<string | null>(null);
+
+  const removeFromWishlist = useCallback(
+    async (appid: number) => {
+      setWlMsg(null);
+      const ok = await window.launcher.steamRemoveFromWishlist(appid).catch(() => false);
+      if (ok) setEntries((prev) => prev?.filter((e) => e.appid !== appid) ?? prev);
+      else setWlMsg(t('store.wl.removeFail'));
+    },
+    [t]
+  );
+
   const loadWishlist = useCallback(
     async (force = false) => {
+      if (wlLoading.current) return;
+      wlLoading.current = true;
       setEntries(null);
       setWlError(null);
       setVisible(WL_PAGE);
-      if (force) setMeta({});
+      if (force) {
+        setMeta({});
+        attemptedMeta.current.clear();
+      }
       try {
         const acc = await api.getSteamAccount();
         if (!acc.configured || !acc.steamId) {
@@ -145,13 +308,15 @@ const StorePage: React.FC = () => {
         setEntries(await window.launcher.storeWishlist(acc.steamId, force));
       } catch (e) {
         setWlError(e instanceof Error ? e.message : String(e));
+      } finally {
+        wlLoading.current = false;
       }
     },
     [t]
   );
 
   useEffect(() => {
-    if (tab === 'wishlist' && entries === null && !wlError) loadWishlist();
+    if (tab === 'wishlist' && entries === null && !wlError && !wlLoading.current) void loadWishlist();
   }, [tab, entries, wlError, loadWishlist]);
 
   // Name/price/discount sorting and the discount filter need metadata for the
@@ -207,15 +372,22 @@ const StorePage: React.FC = () => {
   useEffect(() => {
     if (tab !== 'wishlist' || !entries) return;
     const targets = needsFullMeta ? entries.map((e) => e.appid) : shownSlice.map((i) => i.appid);
-    const missing = targets.filter((id) => !meta[id] && !inFlight.current.has(id)).slice(0, 100);
+    // `attemptedMeta` (not just `meta`) is the stop condition: Steam omits
+    // delisted appids from its response, so they never land in `meta` and
+    // would otherwise be re-requested on every render, forever.
+    const missing = targets
+      .filter((id) => !meta[id] && !attemptedMeta.current.has(id))
+      .slice(0, 100);
     if (!missing.length) return;
 
-    missing.forEach((id) => inFlight.current.add(id));
+    missing.forEach((id) => attemptedMeta.current.add(id));
     window.launcher
       .storeItemsMeta(missing, lang)
       .then((res) => setMeta((prev) => ({ ...prev, ...res })))
-      .catch(() => undefined)
-      .finally(() => missing.forEach((id) => inFlight.current.delete(id)));
+      .catch(() => {
+        // Transient failure — allow a retry on the next pass.
+        missing.forEach((id) => attemptedMeta.current.delete(id));
+      });
   }, [tab, entries, shownSlice, meta, needsFullMeta, lang]);
 
   // Windowed rendering: grow the window when the sentinel scrolls into view.
@@ -255,7 +427,7 @@ const StorePage: React.FC = () => {
     <div style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
       {/* Header row: tabs + live search */}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 20 }}>
-        {(['home', 'wishlist'] as Tab[]).map((k) => (
+        {(['home', 'wishlist', 'discovery'] as Tab[]).map((k) => (
           <button
             key={k}
             onClick={() => {
@@ -268,7 +440,7 @@ const StorePage: React.FC = () => {
               color: tab === k && !results ? 'var(--on-accent)' : 'var(--text)',
             }}
           >
-            {k === 'home' ? t('store.home') : t('store.wishlist')}
+            {k === 'home' ? t('store.home') : k === 'wishlist' ? t('store.wishlist') : t('store.dq.tab')}
           </button>
         ))}
 
@@ -288,20 +460,42 @@ const StorePage: React.FC = () => {
         </div>
       </div>
 
+      {/* "Hide owned" — applies to the home feed and search results */}
+      {(tab === 'home' || results) && (
+        <label
+          style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, marginBottom: 16, cursor: 'pointer' }}
+        >
+          <input
+            type="checkbox"
+            checked={hideOwned}
+            onChange={(e) => {
+              setHideOwned(e.target.checked);
+              hideOwnedStore.set(e.target.checked);
+            }}
+          />
+          {t('store.hideOwned')}
+        </label>
+      )}
+
       {/* Search results override the tab content */}
       {results ? (
-        <section>
-          <h3 style={{ margin: '0 0 10px' }}>{t('store.results')}</h3>
-          {results.length === 0 ? (
-            <p style={{ color: 'var(--muted)' }}>{t('store.noResults')}</p>
-          ) : (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-              {results.map((it, i) => (
-                <ItemCard key={`${it.appid}-${i}`} item={it} own={own} />
-              ))}
-            </div>
-          )}
-        </section>
+        (() => {
+          const shown = applyOwnedFilter(results, own, hideOwned);
+          return (
+            <section>
+              <h3 style={{ margin: '0 0 10px' }}>{t('store.results')}</h3>
+              {shown.length === 0 ? (
+                <p style={{ color: 'var(--muted)' }}>{t('store.noResults')}</p>
+              ) : (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                  {shown.map((it, i) => (
+                    <ItemCard key={`${it.appid}-${i}`} item={it} own={own} />
+                  ))}
+                </div>
+              )}
+            </section>
+          );
+        })()
       ) : tab === 'home' ? (
         <>
           {homeError && <p style={{ color: '#ff6b6b' }}>{t('common.error')}: {homeError}</p>}
@@ -316,6 +510,7 @@ const StorePage: React.FC = () => {
                 banner={s.banner}
                 items={s.items}
                 own={own}
+                hideOwned={hideOwned}
               />
             ))}
           {home &&
@@ -325,6 +520,7 @@ const StorePage: React.FC = () => {
                 name={personalTitle(s, t as (k: string, vars?: Record<string, string>) => string)}
                 items={s.items}
                 own={own}
+                hideOwned={hideOwned}
               />
             ))}
           {home?.sections
@@ -336,10 +532,13 @@ const StorePage: React.FC = () => {
                 banner={s.banner}
                 items={s.items}
                 own={own}
+                hideOwned={hideOwned}
                 moreTo={SECTION_PAGES.has(s.id) ? `/store/section/${s.id}` : undefined}
               />
             ))}
         </>
+      ) : tab === 'discovery' ? (
+        <DiscoveryView />
       ) : (
         <>
           {/* Wishlist filter bar */}
@@ -375,13 +574,37 @@ const StorePage: React.FC = () => {
           </div>
 
           {wlError && <p style={{ color: 'var(--muted)' }}>{wlError}</p>}
+          {wlMsg && <p style={{ color: '#e0a458' }}>{wlMsg}</p>}
           {!entries && !wlError && <p style={{ color: 'var(--muted)' }}>{t('lib.loading')}</p>}
           {entries && entries.length === 0 && <p style={{ color: 'var(--muted)' }}>{t('store.wl.empty')}</p>}
           {entries && wlShown.length > 0 && (
             <>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
                 {shownSlice.map((it) => (
-                  <ItemCard key={it.appid} item={it} own={own} />
+                  <div key={it.appid} style={{ position: 'relative' }}>
+                    <ItemCard item={it} own={own} />
+                    <button
+                      aria-label={t('store.wl.remove')}
+                      title={t('store.wl.remove')}
+                      onClick={() => void removeFromWishlist(it.appid)}
+                      style={{
+                        position: 'absolute',
+                        top: 4,
+                        right: 4,
+                        width: 22,
+                        height: 22,
+                        borderRadius: 6,
+                        border: 'none',
+                        background: 'rgba(0,0,0,.55)',
+                        color: '#fff',
+                        cursor: 'pointer',
+                        fontSize: 12,
+                        lineHeight: 1,
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </div>
                 ))}
               </div>
               <div ref={sentinelRef} style={{ height: 1 }} />

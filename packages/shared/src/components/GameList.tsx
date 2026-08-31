@@ -8,11 +8,14 @@ import GameCard from './GameCard';
 
 const PAGE = 60; // how many cards to add per batch
 
+export type LibrarySort = 'name' | 'playtime';
+
 interface ListState {
   sources: Source[];
   installedOnly: boolean;
   query: string;
   visible: number;
+  sort: LibrarySort;
 }
 
 // Survives unmount/remount within the session (e.g. navigating to a game page
@@ -31,11 +34,12 @@ const GameList: React.FC<{ games: Game[]; stateKey?: string }> = ({ games, state
   const [installedOnly, setInstalledOnly] = useState(saved?.installedOnly ?? false);
   const [query, setQuery] = useState(saved?.query ?? '');
   const [visible, setVisible] = useState(saved?.visible ?? PAGE);
+  const [sort, setSort] = useState<LibrarySort>(saved?.sort ?? 'name');
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (stateKey) savedListStates.set(stateKey, { sources, installedOnly, query, visible });
-  }, [stateKey, sources, installedOnly, query, visible]);
+    if (stateKey) savedListStates.set(stateKey, { sources, installedOnly, query, visible, sort });
+  }, [stateKey, sources, installedOnly, query, visible, sort]);
 
   const toggleSource = (s: Source) =>
     setSources((prev) => (prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]));
@@ -59,13 +63,21 @@ const GameList: React.FC<{ games: Game[]; stateKey?: string }> = ({ games, state
 
   const filtered = useMemo(() => {
     const q = query.toLowerCase();
-    return games.filter((g) => {
+    const list = games.filter((g) => {
       // AND semantics: the game must be on EVERY selected platform.
       if (sources.length > 0 && !sources.every((s) => g.sources.includes(s))) return false;
       if (installedOnly && !installedSet.has(g)) return false;
       return g.title.toLowerCase().includes(q);
     });
-  }, [games, sources, installedOnly, query, installedSet]);
+    if (sort === 'playtime') {
+      // Total across stores, most played first; untouched games at the end
+      // fall back to the alphabetical order the API already provides.
+      const minutes = (g: Game) =>
+        g.entries.reduce((sum, e) => sum + (e.playtimeMinutes ?? 0), 0);
+      list.sort((a, b) => minutes(b) - minutes(a) || a.title.localeCompare(b.title));
+    }
+    return list;
+  }, [games, sources, installedOnly, query, installedSet, sort]);
 
   // Reset the visible window when the filter/search changes (but not on the
   // initial mount — a restored `visible` must survive coming back to the list).
@@ -74,7 +86,7 @@ const GameList: React.FC<{ games: Game[]; stateKey?: string }> = ({ games, state
     if (mounted.current) setVisible(PAGE);
     else mounted.current = true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sources, installedOnly, query]);
+  }, [sources, installedOnly, query, sort]);
 
   // Load the next batch when the sentinel enters the viewport.
   useEffect(() => {
@@ -122,6 +134,16 @@ const GameList: React.FC<{ games: Game[]; stateKey?: string }> = ({ games, state
             {t('filter.installed')} ({counts.installed})
           </button>
         )}
+
+        <select
+          aria-label={t('lib.sort')}
+          value={sort}
+          onChange={(e) => setSort(e.target.value as LibrarySort)}
+          style={{ ...filterBtn(false), paddingRight: 8 }}
+        >
+          <option value="name">{t('lib.sort.name')}</option>
+          <option value="playtime">{t('lib.sort.playtime')}</option>
+        </select>
 
         <div style={{ marginLeft: 'auto', position: 'relative' }}>
           <input

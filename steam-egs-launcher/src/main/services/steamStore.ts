@@ -6,13 +6,17 @@
 //   - IWishlistService/GetWishlist              → wishlist appids (public profiles)
 //   - IStoreBrowseService/GetItems              → batch name/price/discount for appids
 //
-// Everything is cached in-memory with a single TTL (LAUNCHER_STORE_CACHE_TTL,
-// default 300 s) so hopping wishlist → home → wishlist doesn't refetch; the UI
-// refresh button passes force=true to bypass the cache. Wishlist metadata is
+// Everything goes through the unified memory+disk cache (services/cache.ts)
+// with stale-while-revalidate: priced data uses the "dynamic" TTL
+// (LAUNCHER_STORE_CACHE_TTL, default 1 h), the tag list is static (24 h). The
+// UI refresh button passes force=true to fetch live. Wishlist metadata is
 // fetched lazily in batches driven by the renderer's scroll position, so large
 // wishlists don't hammer the API upfront.
 
+import { normalizeTitle } from '@app/shared';
 import { getStoreCacheTtlMs } from '../config';
+import { cached, cacheGet, cacheSet, cachePurge, TTL_STATIC_MS } from './cache';
+import { BROWSER_UA, httpJson } from './http';
 import { getRegions } from './regions';
 
 const STORE_API = 'https://store.steampowered.com/api';
@@ -73,50 +77,18 @@ export interface WishlistEntry {
 export type WishlistItem = StoreItem & { priority: number; dateAdded: number };
 
 // Locale follows the UI language; the country (→ currency, regional prices)
-// comes from the Steam account region stored in the backend (fallback US).
-async function region(lang: string): Promise<{ l: string; cc: string }> {
-  const { steamCc } = await getRegions();
-  return { l: lang === 'ru' ? 'russian' : 'english', cc: steamCc };
+// comes from the local Steam account region (fallback US).
+function region(lang: string): { l: string; cc: string } {
+  return { l: lang === 'ru' ? 'russian' : 'english', cc: getRegions().steamCc };
 }
 
-// ===================== TTL cache =====================
-
-const cache = new Map<string, { at: number; data: unknown }>();
-
-function cacheGet<T>(key: string): T | null {
-  const hit = cache.get(key);
-  if (!hit) return null;
-  if (Date.now() - hit.at > getStoreCacheTtlMs()) {
-    cache.delete(key);
-    return null;
-  }
-  return hit.data as T;
-}
-
-function cacheSet(key: string, data: unknown): void {
-  cache.set(key, { at: Date.now(), data });
-}
-
-function cachePurge(prefix: string): void {
-  for (const key of cache.keys()) if (key.startsWith(prefix)) cache.delete(key);
-}
+// Cache namespace (userData/cache/steamStore.json).
+const NS = 'steamStore';
 
 // ===================== helpers =====================
 
-async function getJson<T>(url: string): Promise<T> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 15_000);
-  try {
-    const res = await fetch(url, {
-      signal: ctrl.signal,
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
-    });
-    if (!res.ok) throw new Error(`Steam store request failed: HTTP ${res.status}`);
-    return (await res.json()) as T;
-  } finally {
-    clearTimeout(timer);
-  }
-}
+const getJson = <T,>(url: string): Promise<T> =>
+  httpJson<T>(url, { headers: { 'User-Agent': BROWSER_UA } });
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -127,7 +99,8 @@ function discountPct(initial?: number | null, final?: number | null): number | u
   return undefined;
 }
 
-const normName = (s: string): string => s.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+// Same key cross-store matching uses everywhere (see @app/shared/matching).
+const normName = normalizeTitle;
 
 /**
  * Steam front-page sections repeat the same product as several SKUs (e.g. four
@@ -196,12 +169,15 @@ const SORT_BY: Record<SectionSort, string | null> = {
 // ===================== Front page =====================
 
 export async function storeHome(lang: string, force = false): Promise<StoreHome> {
-  const { l, cc } = await region(lang);
-  const key = `home:${lang}:${cc}`;
-  if (!force) {
-    const cached = cacheGet<StoreHome>(key);
-    if (cached) return cached;
-  }
+  const { l, cc } = region(lang);
+  return cached(NS, `home:${lang}:${cc}`, getStoreCacheTtlMs(), () => fetchHome(l, cc, lang), {
+    force,
+  });
+}
+
+async function fetchHome(l: string, cc: string, lang: string): Promise<StoreHome> {
+  // featuredcategories carries most of the page; if IT fails there's nothing
+  // to render, so that one is allowed to reject.
   const [featured, cats] = await Promise.all([
     getJson<any>(`${STORE_API}/featured/?l=${l}&cc=${cc}`).catch(() => null),
     getJson<any>(`${STORE_API}/featuredcategories/?l=${l}&cc=${cc}`),
@@ -320,9 +296,7 @@ export async function storeHome(lang: string, force = false): Promise<StoreHome>
     sections.push({ id: 'spotlights', name: spotlightName, items: spotlightItems });
   }
 
-  const data = { sections };
-  cacheSet(key, data);
-  return data;
+  return { sections };
 }
 
 // Genre rows shown on the front page (section id = `genre-<key>`; the UI
@@ -334,7 +308,7 @@ const HOME_GENRES = ['action', 'rpg', 'strategy', 'indie'];
  * names/prices/images are hydrated through itemsMeta (cached per appid).
  */
 async function genreRow(genre: string, lang: string): Promise<StoreSection | null> {
-  const { l, cc } = await region(lang);
+  const { l, cc } = region(lang);
   const data = await getJson<any>(
     `${STORE_API}/getappsingenre?genre=${encodeURIComponent(genre)}&l=${l}&cc=${cc}`
   );
@@ -362,33 +336,31 @@ async function genreRow(genre: string, lang: string): Promise<StoreSection | nul
 // ===================== Search =====================
 
 export async function storeSearch(term: string, lang: string): Promise<StoreItem[]> {
-  const { l, cc } = await region(lang);
+  const { l, cc } = region(lang);
   const key = `search:${lang}:${cc}:${term.trim().toLowerCase()}`;
-  const cached = cacheGet<StoreItem[]>(key);
-  if (cached) return cached;
-  const url = `${STORE_API}/storesearch/?term=${encodeURIComponent(term)}&l=${l}&cc=${cc}`;
-  const data = await getJson<any>(url);
-  const items = dedupeItems(
-    (data?.items ?? []).map((raw: any): StoreItem => {
-      const p = raw.price;
-      return {
-        appid: raw.id,
-        name: raw.name ?? `App ${raw.id}`,
-        image: raw.tiny_image ?? null,
-        isFree: !p,
-        price: p
-          ? {
-              currency: p.currency,
-              initial: p.initial ?? null,
-              final: p.final ?? null,
-              discountPct: discountPct(p.initial, p.final),
-            }
-          : null,
-      };
-    })
-  );
-  cacheSet(key, items);
-  return items;
+  return cached(NS, key, getStoreCacheTtlMs(), async () => {
+    const url = `${STORE_API}/storesearch/?term=${encodeURIComponent(term)}&l=${l}&cc=${cc}`;
+    const data = await getJson<any>(url);
+    return dedupeItems(
+      (data?.items ?? []).map((raw: any): StoreItem => {
+        const p = raw.price;
+        return {
+          appid: raw.id,
+          name: raw.name ?? `App ${raw.id}`,
+          image: raw.tiny_image ?? null,
+          isFree: !p,
+          price: p
+            ? {
+                currency: p.currency,
+                initial: p.initial ?? null,
+                final: p.final ?? null,
+                discountPct: discountPct(p.initial, p.final),
+              }
+            : null,
+        };
+      })
+    );
+  });
 }
 
 /**
@@ -397,10 +369,11 @@ export async function storeSearch(term: string, lang: string): Promise<StoreItem
  * and price comparisons, so "not found" beats "maybe". Cached (null too).
  */
 export async function findSteamAppId(title: string, lang: string): Promise<number | null> {
-  const { cc } = await region(lang);
+  const { cc } = region(lang);
   const key = `findapp:${lang}:${cc}:${normName(title)}`;
-  const cached = cacheGet<number | 0>(key);
-  if (cached !== null) return cached === 0 ? null : cached;
+  // The title→appid mapping never changes — any cached hit (even stale) is valid.
+  const hit = cacheGet<number>(NS, key, TTL_STATIC_MS);
+  if (hit) return hit.data === 0 ? null : hit.data;
 
   let items: StoreItem[];
   try {
@@ -409,9 +382,9 @@ export async function findSteamAppId(title: string, lang: string): Promise<numbe
     return null; // transient — not cached
   }
   const want = normName(title);
-  const hit = items.find((i) => i.appid > 0 && normName(i.name) === want);
-  cacheSet(key, hit?.appid ?? 0); // 0 = legit "not on Steam" (cache can't hold null)
-  return hit?.appid ?? null;
+  const found = items.find((i) => i.appid > 0 && normName(i.name) === want);
+  cacheSet(NS, key, found?.appid ?? 0); // 0 = legit "not on Steam"
+  return found?.appid ?? null;
 }
 
 // ===================== Wishlist =====================
@@ -422,30 +395,35 @@ export async function findSteamAppId(title: string, lang: string): Promise<numbe
  * force=true also drops cached metadata so prices refresh.
  */
 export async function wishlistEntries(steamId: string, force = false): Promise<WishlistEntry[]> {
-  const key = `wl:${steamId}`;
-  if (force) {
-    cache.delete(key);
-    cachePurge('meta:');
-  } else {
-    const cached = cacheGet<WishlistEntry[]>(key);
-    if (cached) return cached;
-  }
-
-  let entries: WishlistEntry[] = [];
   try {
-    const data = await getJson<any>(
-      `${WEB_API}/IWishlistService/GetWishlist/v1/?steamid=${encodeURIComponent(steamId)}`
+    return await cached(
+      NS,
+      `wl:${steamId}`,
+      getStoreCacheTtlMs(),
+      async () => {
+        const data = await getJson<any>(
+          `${WEB_API}/IWishlistService/GetWishlist/v1/?steamid=${encodeURIComponent(steamId)}`
+        );
+        return (data?.response?.items ?? []).map(
+          (e: any): WishlistEntry => ({
+            appid: e.appid,
+            priority: e.priority ?? 0,
+            dateAdded: e.date_added ?? 0,
+          })
+        );
+      },
+      { force }
     );
-    entries = (data?.response?.items ?? []).map((e: any) => ({
-      appid: e.appid,
-      priority: e.priority ?? 0,
-      dateAdded: e.date_added ?? 0,
-    }));
   } catch {
-    return []; // private profile / bad id — show as empty
+    return []; // private profile / bad id — show as empty (not cached)
   }
-  cacheSet(key, entries);
-  return entries;
+}
+
+
+/** Drops cached wishlist rows — called after an add/remove mutation so the
+ *  change survives navigation instead of being masked by the 1 h cache. */
+export function invalidateWishlist(): void {
+  cachePurge(NS, 'wl:');
 }
 
 function chunks<T>(arr: T[], size: number): T[][] {
@@ -462,19 +440,66 @@ function chunks<T>(arr: T[], size: number): T[][] {
  */
 export async function itemsMeta(
   appids: number[],
-  lang: string
+  lang: string,
+  force = false
 ): Promise<Record<number, StoreItem>> {
-  const { l, cc } = await region(lang);
+  const { l, cc } = region(lang);
   const result: Record<number, StoreItem> = {};
 
+  // Fresh hits are used as is; stale ones are served now and refreshed in the
+  // background; genuinely missing ids are fetched before returning.
   const missing: number[] = [];
+  const stale: number[] = [];
   for (const appid of appids) {
-    const cached = cacheGet<StoreItem>(`meta:${lang}:${cc}:${appid}`);
-    if (cached) result[appid] = cached;
-    else missing.push(appid);
+    const hit = force
+      ? null
+      : cacheGet<StoreItem>(NS, `meta:${lang}:${cc}:${appid}`, getStoreCacheTtlMs());
+    if (hit) {
+      result[appid] = withDerivedComingSoon(hit.data);
+      if (!hit.fresh) stale.push(appid);
+    } else {
+      missing.push(appid);
+    }
   }
+  if (stale.length) void fetchMetaBatch(stale, l, cc, lang).catch(() => {});
+  Object.assign(result, await fetchMetaBatch(missing, l, cc, lang));
 
-  for (const chunk of chunks(missing, 100)) {
+  // Unresolved appids are simply absent from the result — callers decide how
+  // to handle them (the wishlist renders its own fallback; genre rows drop them).
+  return result;
+}
+
+// Appids currently being fetched. The renderer hydrates from scroll position,
+// so without this a slow batch would be re-requested on every scroll tick.
+const metaInFlight = new Set<number>();
+
+/** Fetches + caches one batch of appids; returns what GetItems resolved. */
+async function fetchMetaBatch(
+  ids: number[],
+  l: string,
+  cc: string,
+  lang: string
+): Promise<Record<number, StoreItem>> {
+  const result: Record<number, StoreItem> = {};
+  const pending = ids.filter((id) => !metaInFlight.has(id));
+  if (!pending.length) return result;
+  pending.forEach((id) => metaInFlight.add(id));
+
+  try {
+    return await fetchMetaChunks(pending, l, cc, lang, result);
+  } finally {
+    pending.forEach((id) => metaInFlight.delete(id));
+  }
+}
+
+async function fetchMetaChunks(
+  ids: number[],
+  l: string,
+  cc: string,
+  lang: string,
+  result: Record<number, StoreItem>
+): Promise<Record<number, StoreItem>> {
+  for (const chunk of chunks(ids, 100)) {
     const input = {
       ids: chunk.map((appid) => ({ appid })),
       context: { language: l, country_code: cc, steam_realm: 1 },
@@ -500,8 +525,10 @@ export async function itemsMeta(
           name: si.name,
           image: assetImage(si) ?? conventionCapsule(si.appid),
           isFree: si.is_free ?? false,
-          comingSoon:
-            si.release?.is_coming_soon ?? (releaseUnix != null && releaseUnix * 1000 > Date.now()),
+          // Steam's own flag when present; otherwise derived at read time from
+          // releaseUnix (a cached boolean would keep saying "coming soon"
+          // after the game shipped).
+          comingSoon: si.release?.is_coming_soon ?? undefined,
           releaseUnix,
           price: bpo
             ? {
@@ -513,17 +540,22 @@ export async function itemsMeta(
               }
             : null,
         };
-        cacheSet(`meta:${lang}:${cc}:${si.appid}`, item);
-        result[si.appid] = item;
+        cacheSet(NS, `meta:${lang}:${cc}:${si.appid}`, item);
+        result[si.appid] = withDerivedComingSoon(item);
       }
     } catch {
       /* keep going — items without metadata still render by appid */
     }
   }
-
-  // Unresolved appids are simply absent from the result — callers decide how
-  // to handle them (the wishlist renders its own fallback; genre rows drop them).
   return result;
+}
+
+/** Fills in `comingSoon` from the release date when Steam didn't state it. */
+function withDerivedComingSoon(item: StoreItem): StoreItem {
+  if (item.comingSoon != null) return item;
+  return item.releaseUnix != null
+    ? { ...item, comingSoon: item.releaseUnix * 1000 > Date.now() }
+    : item;
 }
 
 // ===================== Section pages =====================
@@ -573,7 +605,7 @@ export async function searchItems(
   count = 50,
   comingSoonDefault = false
 ): Promise<StoreSectionPage> {
-  const { l, cc } = await region(lang);
+  const { l, cc } = region(lang);
   const url =
     `https://store.steampowered.com/search/results/?json=1&start=${start}&count=${count}` +
     `&${query}&l=${l}&cc=${cc}`;
@@ -639,6 +671,8 @@ export async function searchItems(
     })
   );
 
+  // Based on the RAW row count: dedupe/filtering can shrink `items`, but the
+  // server still has more rows to give at the next offset.
   return { items, hasMore: raw.length >= count };
 }
 
@@ -650,19 +684,35 @@ export async function storeSection(
   count = 50,
   sort: SectionSort = 'default'
 ): Promise<StoreSectionPage> {
-  const { cc } = await region(lang);
+  const { cc } = region(lang);
   const filter = sectionFilter(id, cc);
   if (!filter) throw new Error(`Unknown store section: ${id}`);
 
   const key = `section:${lang}:${cc}:${id}:${sort}:${start}:${count}`;
-  const cached = cacheGet<StoreSectionPage>(key);
-  if (cached) return cached;
+  return cached(NS, key, getStoreCacheTtlMs(), () => {
+    const sortBy = SORT_BY[sort];
+    const query = `${filter}${sortBy ? `&sort_by=${sortBy}` : ''}`;
+    return searchItems(query, lang, start, count, id === 'coming_soon');
+  });
+}
 
-  const sortBy = SORT_BY[sort];
-  const query = `${filter}${sortBy ? `&sort_by=${sortBy}` : ''}`;
-  const page = await searchItems(query, lang, start, count, id === 'coming_soon');
-  cacheSet(key, page);
-  return page;
+// ===================== Tags (user tags, like the Steam page shows) =====================
+
+// tagid → localized name; ~450 entries, static class (refreshed daily).
+async function tagNames(lang: string): Promise<Record<string, string>> {
+  try {
+    return await cached(NS, `tags:${lang}`, TTL_STATIC_MS, async () => {
+      const l = lang === 'ru' ? 'russian' : 'english';
+      const json = await getJson<any>(`${WEB_API}/IStoreService/GetTagList/v1/?language=${l}`);
+      const map: Record<string, string> = {};
+      for (const tag of json?.response?.tags ?? []) {
+        if (tag?.tagid && tag?.name) map[String(tag.tagid)] = tag.name;
+      }
+      return map;
+    });
+  } catch {
+    return {}; // tags row is optional
+  }
 }
 
 // ===================== Game details =====================
@@ -675,6 +725,8 @@ export interface GameDetails {
   developers: string[];
   publishers: string[];
   genres: string[];
+  /** User-voted tags — what the Steam product page shows as "Popular tags". */
+  tags: string[];
   releaseDate?: string | null;
   comingSoon?: boolean;
   price?: StorePrice | null;
@@ -696,12 +748,26 @@ export interface GameDetails {
  * review summary + current player count. Reviews/players are best-effort.
  */
 export async function appDetails(appid: number, lang: string): Promise<GameDetails> {
-  const { l, cc } = await region(lang);
-  const key = `details:${lang}:${cc}:${appid}`;
-  const cached = cacheGet<GameDetails>(key);
-  if (cached) return cached;
+  const { l, cc } = region(lang);
+  return cached(NS, `details:${lang}:${cc}:${appid}`, getStoreCacheTtlMs(), () =>
+    fetchAppDetails(appid, lang, l, cc)
+  );
+}
 
-  const [detailsDoc, reviewsDoc, playersDoc] = await Promise.all([
+async function fetchAppDetails(
+  appid: number,
+  lang: string,
+  l: string,
+  cc: string
+): Promise<GameDetails> {
+  const tagInput = encodeURIComponent(
+    JSON.stringify({
+      ids: [{ appid }],
+      context: { language: l, country_code: cc, steam_realm: 1 },
+      data_request: { include_tag_count: 10 },
+    })
+  );
+  const [detailsDoc, reviewsDoc, playersDoc, tagsDoc] = await Promise.all([
     getJson<any>(`${STORE_API}/appdetails?appids=${appid}&l=${l}&cc=${cc}`),
     getJson<any>(
       `https://store.steampowered.com/appreviews/${appid}?json=1&language=all&purchase_type=all&num_per_page=0`
@@ -709,7 +775,18 @@ export async function appDetails(appid: number, lang: string): Promise<GameDetai
     getJson<any>(
       `${WEB_API}/ISteamUserStats/GetNumberOfCurrentPlayers/v1/?appid=${appid}`
     ).catch(() => null),
+    getJson<any>(`${WEB_API}/IStoreBrowseService/GetItems/v1/?input_json=${tagInput}`).catch(
+      () => null
+    ),
   ]);
+
+  // Weighted tagids → localized names (the "Popular tags" of the product page).
+  const tagIds: { tagid: number }[] = tagsDoc?.response?.store_items?.[0]?.tags ?? [];
+  const names = tagIds.length ? await tagNames(lang) : {};
+  const tags = tagIds
+    .map((t) => names[String(t.tagid)])
+    .filter((x): x is string => !!x)
+    .slice(0, 8);
 
   const entry = detailsDoc?.[appid];
   if (!entry?.success || !entry.data) throw new Error(`No store data for app ${appid}`);
@@ -732,6 +809,7 @@ export async function appDetails(appid: number, lang: string): Promise<GameDetai
     developers: Array.isArray(d.developers) ? d.developers : [],
     publishers: Array.isArray(d.publishers) ? d.publishers : [],
     genres: Array.isArray(d.genres) ? d.genres.map((g: any) => g.description).filter(Boolean) : [],
+    tags,
     releaseDate: d.release_date?.date ?? null,
     comingSoon: d.release_date?.coming_soon ?? false,
     isFree: d.is_free ?? false,
@@ -762,6 +840,5 @@ export async function appDetails(appid: number, lang: string): Promise<GameDetai
     currentPlayers: playersDoc?.response?.player_count ?? null,
   };
 
-  cacheSet(key, details);
   return details;
 }
