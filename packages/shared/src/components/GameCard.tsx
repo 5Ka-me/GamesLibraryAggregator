@@ -40,6 +40,29 @@ const SourceTag: React.FC<{ source: Source; installed?: boolean }> = ({ source, 
   </span>
 );
 
+// Compact ownership badge for the capsule corner (ST / EGS), colored per store.
+const SourceBadge: React.FC<{ source: Source; installed?: boolean }> = ({ source, installed }) => {
+  const color = sourceMeta(source).color;
+  return (
+    <span
+      title={installed ? `${source} — installed` : source}
+      style={{
+        background: 'rgba(13, 20, 31, 0.85)',
+        border: `1px solid ${color}`,
+        color,
+        fontSize: 9.5,
+        fontWeight: 800,
+        borderRadius: 4,
+        padding: '2px 5px',
+        letterSpacing: 0.4,
+      }}
+    >
+      {installed ? '✓ ' : ''}
+      {source === 'Steam' ? 'ST' : source === 'Epic' ? 'EGS' : source}
+    </span>
+  );
+};
+
 // Protocol deep-link (steam:// / com.epicgames.launcher://) rendered as a small pill button.
 // On the web it's a plain anchor; in the launcher we intercept the click and hand the URL to
 // the main process so the OS protocol handler fires reliably.
@@ -306,101 +329,72 @@ const GameCard: React.FC<{ game: Game }> = ({ game }) => {
     setMenu(null);
   };
 
-  const playtimes = game.entries.filter((e) => e.playtimeMinutes != null && e.playtimeMinutes > 0);
+  const totalMinutes = game.entries.reduce((sum, e) => sum + (e.playtimeMinutes ?? 0), 0);
   const actionable = game.entries.filter((e) => e.launchUrl || e.installUrl);
   const showSourceLabel = game.sources.length > 1; // label per-source only when ambiguous
 
+  const statusLine = [
+    totalMinutes > 0 ? `${(totalMinutes / 60).toFixed(totalMinutes >= 600 ? 0 : 1)} ${t('card.hours')}` : null,
+    installedSrc.length > 0 ? t('card.installed') : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
   return (
     <>
-      <div
-        title={game.title}
-        style={{
-          width: 180,
-          borderRadius: 8,
-          overflow: 'hidden',
-          background: 'var(--panel)',
-          border: '1px solid var(--border)',
-          boxShadow: '0 2px 8px var(--shadow)',
-          display: 'flex',
-          flexDirection: 'column',
-        }}
-      >
-        {/* Cover + title: details page in the launcher, store page on the web */}
-        <div onClick={onClick} style={{ cursor: openDetails || linkable.length ? 'pointer' : 'default' }}>
-          <div
-            style={{
-              height: 100,
-              background: 'var(--panel-2)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
+      {/* Steam-style capsule: cover art + corner ownership badges; title,
+          playtime and actions live in the hover overlay. */}
+      <div className="gcard" title={game.title} onClick={onClick}>
+        {cover ? (
+          <img
+            className="gcard-cover"
+            src={cover}
+            alt={game.title}
+            loading="lazy"
+            decoding="async"
+            onLoad={() => setImgLoaded(true)}
+            onError={() => {
+              setImgLoaded(false);
+              setCoverIdx((i) => i + 1); // next fallback (or the placeholder)
             }}
-          >
-            {cover ? (
-              <img
-                src={cover}
-                alt={game.title}
-                loading="lazy"
-                decoding="async"
-                onLoad={() => setImgLoaded(true)}
-                onError={() => {
-                  setImgLoaded(false);
-                  setCoverIdx((i) => i + 1); // next fallback (or the placeholder)
-                }}
-                style={{
-                  maxHeight: '100%',
-                  maxWidth: '100%',
-                  objectFit: 'contain',
-                  opacity: imgLoaded ? 1 : 0,
-                  transition: 'opacity 0.3s ease',
-                }}
-              />
-            ) : (
-              <span style={{ opacity: 0.5, fontSize: 12 }}>{t('card.noImage')}</span>
-            )}
-          </div>
+            style={{ opacity: imgLoaded ? 1 : 0, transition: 'opacity 0.3s ease' }}
+          />
+        ) : (
+          <div className="gcard-placeholder">{game.title}</div>
+        )}
 
-          <div style={{ padding: '8px 10px 4px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <div style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.2 }}>{game.title}</div>
-            <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-              {game.sources.map((s) => (
-                <SourceTag key={s} source={s} installed={installedSrc.includes(s)} />
-              ))}
-            </div>
-            {playtimes.length > 0 && (
-              <div style={{ fontSize: 12, color: 'var(--muted)' }}>
-                {playtimes.map((e) => (
-                  <div key={e.source}>
-                    {e.source}: {(e.playtimeMinutes! / 60).toFixed(1)} {t('card.hours')}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+        <div className="gcard-badges">
+          {game.sources.map((s) => (
+            <SourceBadge key={s} source={s} installed={installedSrc.includes(s)} />
+          ))}
         </div>
 
-        {/* Action bar: launch / install via native clients */}
-        {actionable.length > 0 && (
-          <div
-            style={{
-              marginTop: 'auto',
-              padding: '6px 10px 10px',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 5,
-            }}
-          >
-            {actionable.map((e) => (
-              <EntryActions
-                key={e.source}
-                entry={e}
-                title={game.title}
-                showLabel={showSourceLabel}
-                compact={!!openDetails}
-              />
-            ))}
+        <div className="gcard-overlay">
+          <div style={{ fontWeight: 700, fontSize: 13, color: '#ffffff', lineHeight: 1.25 }}>
+            {game.title}
           </div>
-        )}
+          {statusLine && (
+            <div style={{ fontSize: 11, color: installedSrc.length ? 'var(--success, #9fd48e)' : '#b6c4d6' }}>
+              {statusLine}
+            </div>
+          )}
+          {actionable.length > 0 && (
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 2 }}
+            >
+              {actionable.map((e) => (
+                <EntryActions
+                  key={e.source}
+                  entry={e}
+                  title={game.title}
+                  showLabel={showSourceLabel}
+                  compact={!!openDetails}
+                />
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Store-picker popover near the cursor */}

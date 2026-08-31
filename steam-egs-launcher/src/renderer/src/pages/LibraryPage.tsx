@@ -1,5 +1,14 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { api, Game, useI18n, GameList } from '@app/shared';
+import {
+  api,
+  Game,
+  SteamRecentGame,
+  useI18n,
+  GameList,
+  getOpenGameDetails,
+  steamAppId,
+  useLibraryActions,
+} from '@app/shared';
 import { useScrollRestore } from '../hooks/useScrollRestore';
 
 const iconBtn: React.CSSProperties = {
@@ -12,14 +21,103 @@ const iconBtn: React.CSSProperties = {
   cursor: 'pointer',
 };
 
-// Module-level games cache: survives navigating to a game page and back — the
-// list renders instantly; filters live in GameList (stateKey) and the scroll
-// position is handled by useScrollRestore.
+// Module-level caches: navigating to a game page and back renders instantly.
 let cachedGames: Game[] | null = null;
+let cachedRecent: SteamRecentGame[] | null = null;
+
+/** Steam-style "Recent" shelf: last-2-weeks games matched to the library. */
+const RecentShelf: React.FC<{ recent: SteamRecentGame[]; games: Game[] }> = ({ recent, games }) => {
+  const { t } = useI18n();
+  const actions = useLibraryActions();
+  const openDetails = getOpenGameDetails();
+
+  // Match recent appids to library games (for navigation + install state).
+  const byAppId = new Map<string, Game>();
+  for (const g of games) {
+    for (const e of g.entries) {
+      const id = steamAppId(e);
+      if (id) byAppId.set(id, g);
+    }
+  }
+
+  const rows = recent
+    .map((r) => ({ recent: r, game: byAppId.get(String(r.appId)) ?? null }))
+    .slice(0, 3);
+  if (rows.length === 0) return null;
+
+  return (
+    <div style={{ marginBottom: 26 }}>
+      <div className="uc-header" style={{ marginBottom: 10 }}>
+        {t('lib.recent')}
+      </div>
+      <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+        {rows.map(({ recent: r, game }) => {
+          const steamEntry = game?.entries.find((e) => e.source === 'Steam');
+          const installed = actions?.getSteamState(String(r.appId)).installed ?? false;
+          const hours = Math.round(r.playtime2Weeks / 6) / 10;
+          return (
+            <div
+              key={r.appId}
+              className="shelf-card"
+              onClick={() => game && openDetails?.(game)}
+            >
+              <img
+                src={`https://cdn.cloudflare.steamstatic.com/steam/apps/${r.appId}/header.jpg`}
+                alt={r.name}
+                loading="lazy"
+                style={{ width: '100%', height: 150, objectFit: 'cover', display: 'block' }}
+              />
+              <div style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div
+                    style={{
+                      fontWeight: 700,
+                      fontSize: 15,
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                    }}
+                  >
+                    {r.name}
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+                    {t('lib.recent2w', { h: hours })}
+                  </div>
+                </div>
+                {installed && steamEntry?.launchUrl ? (
+                  <button
+                    className="btn-play"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void window.launcher.openDeepLink(steamEntry.launchUrl!);
+                    }}
+                  >
+                    ▶ {t('card.play')}
+                  </button>
+                ) : steamEntry?.installUrl ? (
+                  <button
+                    style={iconBtn}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void window.launcher.openDeepLink(steamEntry.installUrl!);
+                    }}
+                  >
+                    ⬇ {t('card.install')}
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
 
 const LibraryPage: React.FC = () => {
   const { t } = useI18n();
   const [games, setGames] = useState<Game[]>(cachedGames ?? []);
+  const [recent, setRecent] = useState<SteamRecentGame[]>(cachedRecent ?? []);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(cachedGames === null);
 
@@ -36,6 +134,14 @@ const LibraryPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
+    // The shelf is a nice-to-have — its failure never blocks the library.
+    api
+      .getSteamRecent()
+      .then((r) => {
+        cachedRecent = r;
+        setRecent(r);
+      })
+      .catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -45,9 +151,7 @@ const LibraryPage: React.FC = () => {
   }, [load]);
 
   return (
-    <div style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
-      <h2 style={{ marginTop: 0 }}>{t('sidebar.library')}</h2>
-
+    <div style={{ maxWidth: 1200, margin: '0 auto', padding: '24px 24px' }}>
       {error && (
         <div
           style={{
@@ -80,7 +184,10 @@ const LibraryPage: React.FC = () => {
       {loading ? (
         <p style={{ color: 'var(--muted)' }}>{t('lib.loading')}</p>
       ) : (
-        <GameList games={games} stateKey="library" />
+        <>
+          <RecentShelf recent={recent} games={games} />
+          <GameList games={games} stateKey="library" />
+        </>
       )}
     </div>
   );

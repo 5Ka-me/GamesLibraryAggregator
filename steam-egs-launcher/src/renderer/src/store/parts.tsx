@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, useI18n, normalizeTitle, openExternal, sourceMeta, steamAppId } from '@app/shared';
 import type { StoreItem } from '../../../preload';
@@ -219,6 +219,7 @@ export const ItemCard: React.FC<{ item: StoreItem; own: Ownership | null }> = ({
       title={item.name}
       style={{
         width: 231,
+        flex: '0 0 auto',
         cursor: 'pointer',
         borderRadius: 8,
         overflow: 'hidden',
@@ -265,6 +266,7 @@ const BannerCard: React.FC<{ item: StoreItem }> = ({ item }) => {
       title={item.name}
       style={{
         width: 340,
+        flex: '0 0 auto',
         cursor: clickable ? 'pointer' : 'default',
         borderRadius: 8,
         overflow: 'hidden',
@@ -310,20 +312,55 @@ export const SectionBlock: React.FC<{
   hideOwned?: boolean;
 }> = ({ name, banner, items, own, moreTo, hideOwned }) => {
   const { t } = useI18n();
+  const rowRef = useRef<HTMLDivElement | null>(null);
   // Banners (spotlights) aren't ownership-matchable — never filter those.
   const shown = banner ? items : applyOwnedFilter(items, own, !!hideOwned);
   if (shown.length === 0) return null; // whole row owned → hide it
+
+  // Steam-style horizontal shelf: cards scroll sideways, arrows page through.
+  const page = (dir: 1 | -1) => {
+    const node = rowRef.current;
+    if (node) node.scrollBy({ left: dir * (node.clientWidth - 120), behavior: 'smooth' });
+  };
+
+  const arrow: React.CSSProperties = {
+    width: 28,
+    height: 28,
+    borderRadius: 7,
+    background: 'var(--panel-2)',
+    border: '1px solid var(--border)',
+    color: 'var(--muted)',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: 13,
+    lineHeight: 1,
+  };
+
   return (
     <section style={{ marginBottom: 28 }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, margin: '0 0 10px' }}>
-        <h3 style={{ margin: 0 }}>{name}</h3>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '0 0 10px' }}>
+        <h3 className="uc-header" style={{ margin: 0 }}>{name}</h3>
         {moreTo && (
-          <Link to={moreTo} state={{ name }} style={{ fontSize: 13 }}>
+          <Link to={moreTo} state={{ name }} style={{ fontSize: 12.5, fontWeight: 600 }}>
             {t('store.showAll')}
           </Link>
         )}
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+          <button aria-label="scroll left" style={arrow} onClick={() => page(-1)}>
+            ‹
+          </button>
+          <button aria-label="scroll right" style={arrow} onClick={() => page(1)}>
+            ›
+          </button>
+        </div>
       </div>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+      <div
+        ref={rowRef}
+        className="carousel-row"
+        style={{ display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 4 }}
+      >
         {shown.map((it, i) =>
           banner || it.banner ? (
             <BannerCard key={`${it.name}-${i}`} item={it} />

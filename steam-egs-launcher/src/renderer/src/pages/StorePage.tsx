@@ -427,22 +427,42 @@ const StorePage: React.FC = () => {
     <div style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
       {/* Header row: tabs + live search */}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 20 }}>
-        {(['home', 'wishlist', 'discovery'] as Tab[]).map((k) => (
-          <button
-            key={k}
-            onClick={() => {
-              setTab(k);
-              clearSearch();
-            }}
-            style={{
-              ...ctl,
-              background: tab === k && !results ? 'var(--accent)' : 'var(--panel)',
-              color: tab === k && !results ? 'var(--on-accent)' : 'var(--text)',
-            }}
-          >
-            {k === 'home' ? t('store.home') : k === 'wishlist' ? t('store.wishlist') : t('store.dq.tab')}
-          </button>
-        ))}
+        {/* Steam-style segmented tab group */}
+        <div
+          style={{
+            display: 'flex',
+            gap: 4,
+            background: 'var(--input-bg)',
+            border: '1px solid var(--border)',
+            borderRadius: 9,
+            padding: 4,
+          }}
+        >
+          {(['home', 'wishlist', 'discovery'] as Tab[]).map((k) => {
+            const active = tab === k && !results;
+            return (
+              <button
+                key={k}
+                onClick={() => {
+                  setTab(k);
+                  clearSearch();
+                }}
+                style={{
+                  padding: '7px 18px',
+                  borderRadius: 6,
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontSize: 13.5,
+                  fontWeight: active ? 700 : 600,
+                  background: active ? 'linear-gradient(180deg, #2b3d59, #24344c)' : 'transparent',
+                  color: active ? '#ffffff' : '#8ea0b8',
+                }}
+              >
+                {k === 'home' ? t('store.home') : k === 'wishlist' ? t('store.wishlist') : t('store.dq.tab')}
+              </button>
+            );
+          })}
+        </div>
 
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
           {searching && <span style={{ color: 'var(--muted)', fontSize: 13 }}>…</span>}

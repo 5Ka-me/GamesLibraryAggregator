@@ -4,7 +4,6 @@ import {
   EpicAccount,
   SteamAccount,
   useI18n,
-  useTheme,
   SteamPanel,
   EpicPanel,
   type Lang,
@@ -37,27 +36,21 @@ const syncBtn: React.CSSProperties = {
   borderColor: 'transparent',
 };
 
-// ---- Appearance: theme + language (moved off the old header) ----
+// ---- Appearance: language only (the launcher is dark-only by design) ----
 const AppearancePanel: React.FC = () => {
   const { t, lang, setLang } = useI18n();
-  const { theme, toggle } = useTheme();
   return (
     <div style={card}>
       <h3 style={{ marginTop: 0 }}>{t('settings.appearance')}</h3>
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <button style={btn} onClick={toggle}>
-          {theme === 'dark' ? t('theme.toLight') : t('theme.toDark')}
-        </button>
-        <select
-          aria-label={t('lang.label')}
-          value={lang}
-          onChange={(e) => setLang(e.target.value as Lang)}
-          style={{ ...btn, paddingRight: 8 }}
-        >
-          <option value="en">EN</option>
-          <option value="ru">RU</option>
-        </select>
-      </div>
+      <select
+        aria-label={t('lang.label')}
+        value={lang}
+        onChange={(e) => setLang(e.target.value as Lang)}
+        style={{ ...btn, paddingRight: 8 }}
+      >
+        <option value="en">EN</option>
+        <option value="ru">RU</option>
+      </select>
     </div>
   );
 };

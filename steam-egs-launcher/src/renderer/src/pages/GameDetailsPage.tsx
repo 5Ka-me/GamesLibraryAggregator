@@ -382,6 +382,21 @@ const LaunchInstallSection: React.FC<{
                 releaseDate={details?.releaseDate}
               />
               <PriceDiff current={steamPrice} other={epicPrice} otherLabel="Epic" />
+              {!steamEntry && epicEntry && (
+                <span
+                  style={{
+                    border: '1px solid var(--epic)',
+                    background: 'rgba(177,140,245,0.1)',
+                    color: 'var(--epic)',
+                    fontSize: 12.5,
+                    fontWeight: 600,
+                    borderRadius: 6,
+                    padding: '4px 10px',
+                  }}
+                >
+                  ✓ {t('details.ownedElsewhere', { p: 'EGS' })}
+                </span>
+              )}
             </>
           )
         )}
@@ -690,30 +705,148 @@ const GameDetailsPage: React.FC = () => {
     }
   };
 
+  const heroArt = details?.headerImage ?? epic?.image ?? libGame?.iconUrl ?? null;
+  const heroTags = (details?.tags.length ? details.tags : epic?.genres ?? []).slice(0, 5);
+
   return (
-    <div style={{ maxWidth: 1000, margin: '0 auto', padding: '24px 20px' }}>
-      {/* Header: back, title, per-platform store buttons (buy / open) */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
-        <button style={ctl} onClick={() => navigate(-1)}>
+    <div style={{ maxWidth: 1000, margin: '0 auto', padding: '0 20px 24px' }}>
+      {/* ===== Hero: blurred key art + sharp capsule + title (Steam app-hub style) ===== */}
+      <div style={{ position: 'relative', margin: '0 -20px 18px', overflow: 'hidden', minHeight: 240 }}>
+        {heroArt && (
+          <img
+            src={heroArt}
+            alt=""
+            aria-hidden
+            style={{
+              position: 'absolute',
+              left: '-6%',
+              top: '-45%',
+              width: '112%',
+              filter: 'blur(28px) saturate(1.15) brightness(0.6)',
+            }}
+          />
+        )}
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            background:
+              'linear-gradient(180deg, rgba(22,29,41,0.25) 0%, rgba(22,29,41,0.6) 55%, var(--bg) 100%)',
+          }}
+        />
+        <button
+          style={{ ...ctl, position: 'absolute', top: 14, left: 20, zIndex: 2 }}
+          onClick={() => navigate(-1)}
+        >
           ←
         </button>
-        <h2 style={{ margin: 0, flex: 1, minWidth: 0 }}>{title ?? '…'}</h2>
-        {appid != null && (
-          <button
-            style={{ ...ctl, background: 'var(--accent)', color: 'var(--on-accent)' }}
-            onClick={() => window.launcher.storeOpenPage(appid)}
-          >
-            {t('details.openInSteam')}
-          </button>
-        )}
-        {(epic?.storeUrl || epicEntry?.namespace) && (
-          <button
-            style={{ ...ctl, background: 'var(--epic)', color: 'var(--on-accent)' }}
-            onClick={openEpicStore}
-          >
-            {t('details.openInEpic')}
-          </button>
-        )}
+        <div style={{ position: 'absolute', top: 14, right: 20, zIndex: 2, display: 'flex', gap: 8 }}>
+          {appid != null && (
+            <button
+              style={{ ...ctl, background: 'var(--accent)', color: 'var(--on-accent)' }}
+              onClick={() => window.launcher.storeOpenPage(appid)}
+            >
+              {t('details.openInSteam')}
+            </button>
+          )}
+          {(epic?.storeUrl || epicEntry?.namespace) && (
+            <button
+              style={{ ...ctl, background: 'var(--epic)', color: 'var(--on-accent)' }}
+              onClick={openEpicStore}
+            >
+              {t('details.openInEpic')}
+            </button>
+          )}
+        </div>
+        <div
+          style={{
+            position: 'relative',
+            display: 'flex',
+            alignItems: 'flex-end',
+            gap: 24,
+            padding: '64px 28px 18px',
+            flexWrap: 'wrap',
+          }}
+        >
+          {heroArt && (
+            <img
+              src={heroArt}
+              alt={title ?? ''}
+              style={{
+                width: 320,
+                maxWidth: '40%',
+                borderRadius: 10,
+                boxShadow: '0 14px 42px rgba(0,0,0,0.6)',
+                display: 'block',
+              }}
+            />
+          )}
+          <div style={{ flex: 1, minWidth: 260, paddingBottom: 2 }}>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+              {steamEntry && (
+                <span
+                  style={{
+                    background: 'rgba(13,20,31,0.7)',
+                    border: '1px solid var(--accent)',
+                    color: 'var(--accent)',
+                    fontSize: 11,
+                    fontWeight: 800,
+                    borderRadius: 5,
+                    padding: '3px 8px',
+                  }}
+                >
+                  ✓ {t('details.inLibrary', { p: 'STEAM' })}
+                </span>
+              )}
+              {epicEntry && (
+                <span
+                  style={{
+                    background: 'rgba(13,20,31,0.7)',
+                    border: '1px solid var(--epic)',
+                    color: 'var(--epic)',
+                    fontSize: 11,
+                    fontWeight: 800,
+                    borderRadius: 5,
+                    padding: '3px 8px',
+                  }}
+                >
+                  ✓ {t('details.inLibrary', { p: 'EGS' })}
+                </span>
+              )}
+            </div>
+            <h1
+              style={{
+                margin: 0,
+                fontSize: 38,
+                fontWeight: 800,
+                letterSpacing: 0.4,
+                color: '#ffffff',
+                textShadow: '0 3px 14px rgba(0,0,0,0.6)',
+                lineHeight: 1.1,
+              }}
+            >
+              {title ?? '…'}
+            </h1>
+            {heroTags.length > 0 && (
+              <div style={{ display: 'flex', gap: 7, marginTop: 10, flexWrap: 'wrap' }}>
+                {heroTags.map((tag) => (
+                  <span
+                    key={tag}
+                    style={{
+                      background: 'rgba(38,52,74,0.85)',
+                      color: '#9fc3e2',
+                      fontSize: 12,
+                      borderRadius: 5,
+                      padding: '4px 10px',
+                    }}
+                  >
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Platform switcher: both tabs always visible; a platform the game
@@ -840,6 +973,21 @@ const GameDetailsPage: React.FC = () => {
                     releaseDate={epic.releaseDate}
                   />
                   <PriceDiff current={epicPrice} other={steamPrice} otherLabel="Steam" />
+                  {!epicEntry && steamEntry && (
+                    <span
+                      style={{
+                        border: '1px solid var(--accent)',
+                        background: 'rgba(87,184,240,0.1)',
+                        color: 'var(--accent)',
+                        fontSize: 12.5,
+                        fontWeight: 600,
+                        borderRadius: 6,
+                        padding: '4px 10px',
+                      }}
+                    >
+                      ✓ {t('details.ownedElsewhere', { p: 'Steam' })}
+                    </span>
+                  )}
                   {epic.rating != null && (
                     <span style={chip} title={t('details.rating')}>
                       ★ {epic.rating.toFixed(1)} / 5

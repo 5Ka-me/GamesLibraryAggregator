@@ -1,38 +1,42 @@
-/* Dark theme by default (mirrors the web app's theme tokens). */
-:root,
-:root[data-theme='dark'] {
-  --bg: #121212;
-  --panel: #1a1a1a;
-  --panel-2: #222;
-  --text: #ececec;
-  --muted: #9aa0a6;
-  --border: #333;
-  --accent: #66c0f4; /* Steam */
-  --epic: #c084fc; /* Epic */
-  --on-accent: #08121a;
-  --input-bg: #202020;
+/* ============================================================
+   GL Aggregator — dark theme (Steam-inspired, own tonality).
+   The launcher is dark-only by design; the blue-slate palette,
+   gradients and component classes mirror the approved mockups.
+   Component classes (.gcard*, .shelf*, .pill*, .uc-header) are
+   duplicated in the web app's index.css — keep them in sync.
+   ============================================================ */
+:root {
+  --bg: #161d29;
+  --bg-chrome: #131922; /* sidebar / app chrome (darkest) */
+  --panel: #1e2836;
+  --panel-2: #26334a;
+  --panel-grad: linear-gradient(180deg, #232f44 0%, #1c2536 100%);
+  --text: #dfe7f0;
+  --muted: #8b9cb2;
+  --border: #2c3a52;
+  --accent: #57b8f0; /* Steam-ish cyan */
+  --accent-bright: #8ed0ff;
+  --epic: #b18cf5; /* Epic violet */
+  --on-accent: #0b1521;
+  --input-bg: #10161f;
   --shadow: rgba(0, 0, 0, 0.45);
-}
-
-:root[data-theme='light'] {
-  --bg: #f4f6f9;
-  --panel: #ffffff;
-  --panel-2: #eef1f5;
-  --text: #1b1f24;
-  --muted: #5f6368;
-  --border: #d4d9e0;
-  --accent: #2a75bb; /* Steam */
-  --epic: #7c3aed; /* Epic */
-  --on-accent: #ffffff;
-  --input-bg: #ffffff;
-  --shadow: rgba(0, 0, 0, 0.12);
+  /* Store price styling */
+  --discount-bg: #37581d;
+  --discount-text: #a8e94f;
+  --success: #9fd48e;
+  /* Play button */
+  --play-grad: linear-gradient(180deg, #6cb42e, #4a8a1f);
+  --on-play: #eaffd6;
+  /* Page background wash (radial glow at the top like the mockups) */
+  --page-grad: radial-gradient(1200px 400px at 50% -100px, #223048 0%, rgba(34, 48, 72, 0) 70%),
+    linear-gradient(180deg, #1a2332 0%, #161d29 45%, #141a24 100%);
 }
 
 * {
   box-sizing: border-box;
 }
 
-/* ===== Scrollbars: slim, rounded, theme-aware (Chromium) ===== */
+/* ===== Scrollbars: slim, rounded (Chromium) ===== */
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -43,7 +47,6 @@
 ::-webkit-scrollbar-thumb {
   background: var(--border);
   border-radius: 8px;
-  /* transparent edge → the thumb looks slimmer and "floats" off content */
   border: 2px solid transparent;
   background-clip: padding-box;
 }
@@ -56,10 +59,9 @@
   background: transparent;
 }
 
-/* The main scroll area always reserves the scrollbar gutter, so pages with and
-   without a scrollbar don't shift horizontally relative to each other. */
 #app-scroll {
   scrollbar-gutter: stable;
+  background: var(--page-grad);
 }
 
 html,
@@ -72,14 +74,15 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  font-family: 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
-  transition: background 0.2s ease, color 0.2s ease;
-  /* Text is selectable everywhere — any piece of info can be copied. */
 }
 
 a {
   color: var(--accent);
+}
+a:hover {
+  color: var(--accent-bright);
 }
 
 code {
@@ -92,8 +95,11 @@ input {
   background: var(--input-bg);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 8px 10px;
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+input::placeholder {
+  color: #6f8098;
 }
 
 button {
@@ -103,4 +109,133 @@ button {
 button:disabled {
   opacity: 0.5;
   cursor: not-allowed !important;
+}
+
+/* ===== Section headers (uppercase, tracked — like the mockups) ===== */
+.uc-header {
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 1.6px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* ===== Library capsule card ===== */
+.gcard {
+  position: relative;
+  width: 150px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--panel);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  cursor: pointer;
+}
+.gcard:hover {
+  transform: scale(1.05);
+  box-shadow: 0 0 0 2px var(--accent), 0 10px 30px rgba(87, 184, 240, 0.35);
+  z-index: 2;
+}
+.gcard-cover {
+  width: 150px;
+  height: 225px;
+  object-fit: cover;
+  display: block;
+}
+.gcard-placeholder {
+  width: 150px;
+  height: 225px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 10px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+.gcard-overlay {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 26px 9px 8px 9px;
+  background: linear-gradient(180deg, rgba(11, 18, 28, 0) 0%, rgba(11, 18, 28, 0.94) 55%);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.gcard:hover .gcard-overlay {
+  opacity: 1;
+}
+.gcard-badges {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  gap: 4px;
+}
+
+/* ===== Recent shelf card ===== */
+.shelf-card {
+  width: 340px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--panel-grad);
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.shelf-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
+}
+
+/* ===== Filter pills ===== */
+.pill {
+  padding: 7px 14px;
+  border-radius: 7px;
+  background: #202c3f;
+  color: #9fb1c8;
+  font-weight: 600;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+}
+.pill:hover {
+  color: var(--text);
+  border-color: #3a4b66;
+}
+.pill-active {
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 700;
+  border-color: transparent;
+}
+
+/* ===== Buttons ===== */
+.btn-play {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 16px;
+  border-radius: 7px;
+  border: none;
+  background: var(--play-grad);
+  color: var(--on-play);
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  box-shadow: 0 3px 12px rgba(108, 180, 46, 0.25);
+}
+.btn-play:hover {
+  filter: brightness(1.08);
+}
+
+/* ===== Store carousels: hidden scrollbar (arrows page instead) ===== */
+.carousel-row::-webkit-scrollbar {
+  display: none;
 }
