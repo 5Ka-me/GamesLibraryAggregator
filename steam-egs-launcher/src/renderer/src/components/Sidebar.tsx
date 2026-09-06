@@ -2,6 +2,81 @@ import React, { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { api, useI18n } from '@app/shared';
 import { LibraryIcon, StoreIcon, StatsIcon, SettingsIcon, PowerIcon, DiceIcon } from './icons';
+import type { UpdateState } from '../../../preload';
+
+/**
+ * Auto-update card, shown above the profile block from the moment a new
+ * version is found: download progress first, then "restart to update". The
+ * app never restarts on its own; the button installs silently and relaunches.
+ */
+const UpdateCard: React.FC = () => {
+  const { t } = useI18n();
+  const [state, setState] = useState<UpdateState>({ status: 'idle' });
+
+  useEffect(() => {
+    window.launcher.updateStatus().then(setState).catch(() => undefined);
+    return window.launcher.onUpdateState(setState);
+  }, []);
+
+  if (state.status !== 'downloading' && state.status !== 'ready') return null;
+  const ready = state.status === 'ready';
+  return (
+    <div
+      role="status"
+      style={{
+        margin: '0 0 10px 0',
+        padding: '10px 12px',
+        borderRadius: 10,
+        background: 'linear-gradient(180deg, #1f3550 0%, #182a40 100%)',
+        border: '1px solid rgba(87, 184, 240, 0.35)',
+        boxShadow: '0 6px 20px rgba(0, 0, 0, 0.35), inset 0 0 0 1px rgba(255,255,255,0.03)',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+        <span
+          aria-hidden
+          style={{
+            width: 8,
+            height: 8,
+            borderRadius: '50%',
+            background: ready ? 'var(--discount-text)' : 'var(--accent)',
+            boxShadow: ready ? '0 0 8px var(--discount-text)' : '0 0 8px var(--accent)',
+            flexShrink: 0,
+          }}
+        />
+        <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text)', lineHeight: 1.2 }}>
+          {ready ? t('update.card.ready', { version: state.version }) : t('update.card.downloading', { version: state.version })}
+        </span>
+      </div>
+      {ready ? (
+        <>
+          <div style={{ fontSize: 11.5, color: 'var(--muted)', lineHeight: 1.35, marginBottom: 8 }}>{t('update.card.hint')}</div>
+          <button
+            type="button"
+            onClick={() => void window.launcher.updateInstall()}
+            style={{
+              width: '100%',
+              padding: '7px 0',
+              borderRadius: 7,
+              border: 'none',
+              cursor: 'pointer',
+              fontWeight: 700,
+              fontSize: 12.5,
+              color: 'var(--on-accent)',
+              background: 'linear-gradient(180deg, #6cc4f6 0%, #2f8fd0 100%)',
+            }}
+          >
+            ↻ {t('update.card.restart')}
+          </button>
+        </>
+      ) : (
+        <div style={{ height: 4, borderRadius: 2, background: 'rgba(255,255,255,0.08)', overflow: 'hidden' }}>
+          <div style={{ width: `${Math.max(2, state.pct)}%`, height: '100%', background: 'var(--accent)', borderRadius: 2, transition: 'width 0.3s ease' }} />
+        </div>
+      )}
+    </div>
+  );
+};
 
 // App logo mark — the fanned-cards icon (same motif as the exe icon).
 const LogoMark: React.FC = () => (
@@ -117,6 +192,7 @@ const Sidebar: React.FC = () => {
       </nav>
 
       <div style={{ marginTop: 'auto' }}>
+        <UpdateCard />
         <div
           style={{
             display: 'flex',

@@ -98,6 +98,11 @@ installer via `extraResources` (it is intentionally not committed to git).
 The app icon lives in `resources/icon.ico` / `icon.png` and is generated (dependency-free) by
 `npm run gen:icon` — replace the script's artwork or drop in your own files any time.
 
+The installer is a **one-click, per-user NSIS** build (`%LOCALAPPDATA%\Programs\GL Aggregator`,
+no UAC, no wizard). Updates download in the background; the sidebar shows a card above the
+profile ("New version X is out — Restart"), and the button installs silently and relaunches.
+Ignored updates are applied on the next quit.
+
 ### Releasing an update
 
 Auto-update is wired to **GitHub Releases** of this repo (electron-updater; the repo must stay

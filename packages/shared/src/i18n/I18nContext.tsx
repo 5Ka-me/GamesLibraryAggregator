@@ -290,6 +290,10 @@ const en: Dict = {
   'update.ready': 'Update {version} is ready',
   'update.restart': 'Restart to update',
   'update.devBuild': 'Updates work only in the installed app.',
+  'update.card.downloading': 'Downloading update {version}',
+  'update.card.ready': 'New version {version} is out',
+  'update.card.hint': 'Restart the app to finish updating.',
+  'update.card.restart': 'Restart',
 
   'common.error': 'Error',
 };
@@ -551,6 +555,10 @@ const ru: Dict = {
   'update.ready': 'Обновление {version} готово',
   'update.restart': 'Перезапустить и обновить',
   'update.devBuild': 'Обновления работают только в установленном приложении.',
+  'update.card.downloading': 'Загружается обновление {version}',
+  'update.card.ready': 'Вышла новая версия {version}',
+  'update.card.hint': 'Перезапустите приложение, чтобы завершить обновление.',
+  'update.card.restart': 'Перезапустить',
 
   'common.error': 'Ошибка',
 

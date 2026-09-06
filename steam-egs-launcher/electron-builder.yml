@@ -21,10 +21,13 @@ extraResources:
 win:
   target: nsis
   icon: resources/icon.ico
+# One-click, per-user installer (AppData\Local\Programs, no UAC, no wizard):
+# the first install is a double-click, and updates install silently in the
+# background — the user only ever sees "restart to update".
 nsis:
-  oneClick: false
+  oneClick: true
   perMachine: false
-  allowToChangeInstallationDirectory: true
+  runAfterFinish: true
   artifactName: GL-Aggregator-Setup-${version}.${ext}
 # Auto-update channel: GitHub Releases of the public repo. Releases are cut by
 # `npm run release <version>` at the repo root → the tag push runs

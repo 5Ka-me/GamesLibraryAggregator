@@ -4,8 +4,8 @@ import { emit } from './events';
 
 // Auto-update via GitHub Releases (see publish: in electron-builder.yml).
 // Deliberately quiet: the check runs shortly after startup, the download
-// happens in the background, and the renderer only ever shows a small
-// "restart to update" banner — the app never restarts itself. Settings has a
+// happens in the background, and the renderer only ever shows a small card
+// above the sidebar profile — the app never restarts itself. Settings has a
 // manual check button; in dev (unpackaged) everything is a no-op.
 
 export type UpdateState =
@@ -72,9 +72,13 @@ export async function checkForUpdates(): Promise<UpdateState> {
   return state;
 }
 
-/** Restart into the downloaded update (the banner's button). */
+/**
+ * Restart into the downloaded update (the sidebar card's button). Silent
+ * install + relaunch: with the one-click NSIS target this shows no installer
+ * UI at all — the app closes and comes back on the new version.
+ */
 export function installUpdate(): void {
-  if (state.status === 'ready') autoUpdater.quitAndInstall();
+  if (state.status === 'ready') autoUpdater.quitAndInstall(true, true);
 }
 
 /** Silent startup check (delayed so it never competes with first paint). */
