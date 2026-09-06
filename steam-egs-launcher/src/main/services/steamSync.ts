@@ -1,6 +1,6 @@
 import { getSteamApiKey, setSteamApiKey } from './secretStore';
 import { getSteamAccount, replaceEntries, updateSteamAccount, type StoredEntry } from './localData';
-import { getWebApiToken, STEAM_WEB_API } from './steamAuth';
+import { communityFetch, getWebApiToken, STEAM_WEB_API } from './steamAuth';
 import { cached, TTL_PROGRESS_MS } from './cache';
 import { httpJson } from './http';
 import { normalizeCountry } from './validate';
@@ -43,6 +43,8 @@ export interface SteamAchievement {
 
 export interface SteamGameAchievements {
   available: boolean;
+  /** When unavailable: no usable Steam sign-in vs. Steam has no data for this game/profile. */
+  reason?: 'auth' | 'unavailable';
   gameName?: string | null;
   total: number;
   unlocked: number;
@@ -131,6 +133,22 @@ interface OwnedGame {
   appId: number;
   name: string;
   playtimeForever: number;
+  /** Unix seconds of the last launch (0/absent = never). */
+  rtimeLastPlayed?: number;
+  playtime2Weeks?: number;
+  playtimeDeck?: number;
+}
+
+/** Maps a raw GetOwnedGames row (either auth path) to the fields we keep. */
+export function ownedGameFromApi(g: any): OwnedGame {
+  return {
+    appId: g.appid,
+    name: g.name,
+    playtimeForever: g.playtime_forever ?? 0,
+    rtimeLastPlayed: g.rtime_last_played ?? 0,
+    playtime2Weeks: g.playtime_2weeks ?? 0,
+    playtimeDeck: g.playtime_deck_forever ?? 0,
+  };
 }
 
 /** Store a full owned-games listing (from either auth path) as the Steam library. */
@@ -148,6 +166,9 @@ export function storeSteamLibrary(
     title: g.name?.trim() || `App ${g.appId}`,
     iconUrl: coverUrl(g.appId),
     playtimeMinutes: g.playtimeForever > 0 ? g.playtimeForever : null,
+    lastPlayedAt: g.rtimeLastPlayed ? new Date(g.rtimeLastPlayed * 1000).toISOString() : null,
+    playtime2WeeksMinutes: g.playtime2Weeks ? g.playtime2Weeks : null,
+    playtimeDeckMinutes: g.playtimeDeck ? g.playtimeDeck : null,
   }));
   const count = replaceEntries('Steam', entries);
   // Only a sync that actually stored something counts as fresh — otherwise a
@@ -165,11 +186,7 @@ export async function syncSteamLibrary(): Promise<{ count: number }> {
     `${API}/IPlayerService/GetOwnedGames/v1/?${auth}&steamid=${encodeURIComponent(steamId)}` +
       '&include_appinfo=true&include_played_free_games=true&format=json'
   );
-  const games: OwnedGame[] = ((json?.response?.games ?? []) as any[]).map((g) => ({
-    appId: g.appid,
-    name: g.name,
-    playtimeForever: g.playtime_forever ?? 0,
-  }));
+  const games: OwnedGame[] = ((json?.response?.games ?? []) as any[]).map(ownedGameFromApi);
   return { count: storeSteamLibrary(steamId, games) };
 }
 
@@ -198,23 +215,227 @@ async function fetchRecent(steamId: string): Promise<SteamRecentGame[]> {
   }));
 }
 
+// ---------- achievement progress (whole library, batched) ----------
+
+export interface SteamAchievementProgress {
+  appId: number;
+  unlocked: number;
+  total: number;
+  /** 0–100. */
+  percentage: number;
+  allUnlocked: boolean;
+}
+
+const PROGRESS_BATCH = 100;
+
+/**
+ * Unlocked/total per game for many games at once — IPlayerService accepts the
+ * web-session token (unlike ISteamUserStats), so this needs no API key. ~100
+ * appids per POST; each batch is cached like other player progress.
+ */
+export async function steamAchievementsProgress(appIds: number[]): Promise<SteamAchievementProgress[]> {
+  const { steamId } = getSteamAccount();
+  if (!steamId || appIds.length === 0) return [];
+  let auth: string;
+  try {
+    auth = await authParam();
+  } catch {
+    return [];
+  }
+  const ids = [...new Set(appIds)].sort((a, b) => a - b);
+  const out: SteamAchievementProgress[] = [];
+  for (let i = 0; i < ids.length; i += PROGRESS_BATCH) {
+    const chunk = ids.slice(i, i + PROGRESS_BATCH);
+    const key = `achprog:${steamId}:${chunk[0]}-${chunk[chunk.length - 1]}:${chunk.length}`;
+    try {
+      out.push(...(await cached('steam', key, TTL_PROGRESS_MS, () => fetchProgress(steamId, chunk, auth))));
+    } catch {
+      /* one failed batch shouldn't hide the others */
+    }
+  }
+  return out;
+}
+
+async function fetchProgress(steamId: string, appIds: number[], auth: string): Promise<SteamAchievementProgress[]> {
+  const [authKey, authValue] = auth.split('=');
+  const form = new URLSearchParams({ [authKey]: decodeURIComponent(authValue), steamid: steamId });
+  appIds.forEach((id, i) => form.set(`appids[${i}]`, String(id)));
+  const json = await httpJson<any>(`${API}/IPlayerService/GetAchievementsProgress/v1/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: form.toString(),
+  });
+  return ((json?.response?.achievement_progress ?? []) as any[])
+    .filter((p) => Number.isInteger(p?.appid))
+    .map((p) => ({
+      appId: p.appid,
+      unlocked: p.unlocked ?? 0,
+      total: p.total ?? 0,
+      percentage: typeof p.percentage === 'number' ? p.percentage : 0,
+      allUnlocked: p.all_unlocked === true,
+    }));
+}
+
 // ---------- achievements ----------
+
+const NO_ACHIEVEMENTS = (reason: 'auth' | 'unavailable'): SteamGameAchievements => ({
+  available: false,
+  reason,
+  total: 0,
+  unlocked: 0,
+  achievements: [],
+});
 
 export async function steamAchievements(appId: number, lang?: string): Promise<SteamGameAchievements> {
   const { steamId } = getSteamAccount();
-  if (!steamId) throw new Error('Steam is not connected.');
+  if (!steamId) return NO_ACHIEVEMENTS('auth');
+  // Resolved outside the cache: a missing sign-in is a transient state that
+  // must not be remembered as "this game has no achievements".
+  let auth: string;
+  try {
+    auth = await authParam();
+  } catch {
+    return NO_ACHIEVEMENTS('auth');
+  }
+  // ISteamUserStats only accepts an API key (a web-session token gets HTTP
+  // 400), so signed-in users without a key take the community route instead.
+  const viaWebApi = auth.startsWith('key=');
   return cached('steam', `ach:${steamId}:${lang ?? 'en'}:${appId}`, TTL_PROGRESS_MS, () =>
-    fetchAchievements(steamId, appId, lang)
+    viaWebApi
+      ? fetchAchievementsWebApi(steamId, appId, auth, lang)
+      : fetchAchievementsCommunity(steamId, appId, lang)
   );
 }
 
-async function fetchAchievements(
+const steamLang = (lang?: string): string => (lang === 'ru' ? 'russian' : 'english');
+
+/**
+ * Key-free path: the profile's achievement XML on steamcommunity.com (unlock
+ * state, times, names, icons — as the signed-in user, so private profiles
+ * work) merged with the public IPlayerService schema (hidden flag, global
+ * unlock percentage, authoritative list incl. not-yet-unlocked hidden ones).
+ */
+async function fetchAchievementsCommunity(
   steamId: string,
   appId: number,
   lang?: string
 ): Promise<SteamGameAchievements> {
-  const auth = await authParam();
-  const l = lang === 'ru' ? 'russian' : 'english';
+  const l = steamLang(lang);
+
+  let xml: string;
+  try {
+    const res = await communityFetch(
+      `https://steamcommunity.com/profiles/${encodeURIComponent(steamId)}/stats/${appId}/achievements/?xml=1&l=${l}`
+    );
+    if (!res.ok) return NO_ACHIEVEMENTS('unavailable');
+    xml = await res.text();
+  } catch {
+    return NO_ACHIEVEMENTS('unavailable');
+  }
+  if (/<error>/.test(xml)) return NO_ACHIEVEMENTS('unavailable');
+
+  interface XmlAch {
+    unlocked: boolean;
+    name: string | null;
+    desc: string | null;
+    icon: string | null;
+    iconGray: string | null;
+    unlockTime: string | null;
+  }
+  const tag = (block: string, name: string): string | null => {
+    const m = block.match(new RegExp(`<${name}[^>]*>(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?</${name}>`));
+    return m ? m[1].trim() || null : null;
+  };
+  const fromXml = new Map<string, XmlAch>(); // key: lower-cased api name
+  for (const m of xml.matchAll(/<achievement(\s[^>]*)?>([\s\S]*?)<\/achievement>/g)) {
+    const block = m[2];
+    const apiname = tag(block, 'apiname');
+    if (!apiname) continue;
+    const ts = parseInt(tag(block, 'unlockTimestamp') ?? '', 10);
+    fromXml.set(apiname.toLowerCase(), {
+      unlocked: /closed="1"/.test(m[1] ?? ''),
+      name: tag(block, 'name'),
+      desc: tag(block, 'description'),
+      icon: tag(block, 'iconClosed'),
+      iconGray: tag(block, 'iconOpen'),
+      unlockTime: Number.isFinite(ts) && ts > 0 ? new Date(ts * 1000).toISOString() : null,
+    });
+  }
+  if (fromXml.size === 0) return NO_ACHIEVEMENTS('unavailable');
+
+  // Schema — best effort (public endpoint, no auth).
+  interface SchemaAch {
+    internal_name?: string;
+    localized_name?: string;
+    localized_desc?: string;
+    icon?: string;
+    icon_gray?: string;
+    hidden?: boolean;
+    player_percent_unlocked?: string | number;
+  }
+  let schema: SchemaAch[] = [];
+  try {
+    const json = await getJson(`${API}/IPlayerService/GetGameAchievements/v1/?appid=${appId}&language=${l}`);
+    if (Array.isArray(json?.response?.achievements)) schema = json.response.achievements;
+  } catch {
+    /* best effort */
+  }
+  const iconUrl = (file?: string): string | null =>
+    file ? `https://shared.fastly.steamstatic.com/community_assets/images/apps/${appId}/${file}` : null;
+
+  const achievements: SteamAchievement[] = [];
+  const seen = new Set<string>();
+  for (const s of schema) {
+    if (!s.internal_name) continue;
+    const key = s.internal_name.toLowerCase();
+    seen.add(key);
+    const x = fromXml.get(key);
+    const pct = typeof s.player_percent_unlocked === 'string' ? parseFloat(s.player_percent_unlocked) : s.player_percent_unlocked;
+    achievements.push({
+      name: s.internal_name,
+      displayName: s.localized_name ?? x?.name ?? s.internal_name,
+      description: s.localized_desc || x?.desc || null,
+      icon: x?.icon ?? iconUrl(s.icon),
+      iconGray: x?.iconGray ?? iconUrl(s.icon_gray),
+      unlocked: x?.unlocked ?? false,
+      unlockTime: x?.unlockTime ?? null,
+      globalPct: Number.isFinite(pct) ? (pct as number) : null,
+      hidden: s.hidden === true,
+    });
+  }
+  // Anything the schema didn't list (or the whole list when it failed).
+  for (const [key, x] of fromXml) {
+    if (seen.has(key)) continue;
+    achievements.push({
+      name: key,
+      displayName: x.name ?? key,
+      description: x.desc,
+      icon: x.icon,
+      iconGray: x.iconGray,
+      unlocked: x.unlocked,
+      unlockTime: x.unlockTime,
+      globalPct: null,
+      hidden: false,
+    });
+  }
+
+  return {
+    available: true,
+    gameName: tag(xml, 'gameName'),
+    total: achievements.length,
+    unlocked: achievements.filter((a) => a.unlocked).length,
+    achievements,
+  };
+}
+
+/** API-key path: the official ISteamUserStats trio (player, schema, global %). */
+async function fetchAchievementsWebApi(
+  steamId: string,
+  appId: number,
+  auth: string,
+  lang?: string
+): Promise<SteamGameAchievements> {
+  const l = steamLang(lang);
 
   // 1) Player achievements — the only required call; anything wrong → unavailable.
   let player: any;
@@ -225,10 +446,10 @@ async function fetchAchievements(
       )
     )?.playerstats;
   } catch {
-    return { available: false, total: 0, unlocked: 0, achievements: [] };
+    return NO_ACHIEVEMENTS('unavailable');
   }
   if (!player?.success || !Array.isArray(player?.achievements)) {
-    return { available: false, total: 0, unlocked: 0, achievements: [] };
+    return NO_ACHIEVEMENTS('unavailable');
   }
 
   // 2) Schema (names/icons/hidden flag) — best effort.

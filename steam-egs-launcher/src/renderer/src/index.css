@@ -30,6 +30,11 @@
   /* Page background wash (radial glow at the top like the mockups) */
   --page-grad: radial-gradient(1200px 400px at 50% -100px, #223048 0%, rgba(34, 48, 72, 0) 70%),
     linear-gradient(180deg, #1a2332 0%, #161d29 45%, #141a24 100%);
+  /* Chart fills for Steam-vs-EGS comparisons. The brand colours (cyan/violet)
+     are indistinguishable under deutan colour blindness, so charts use this
+     validated pair instead (OKLCH dark band, CVD ΔE > 20 on the panel). */
+  --chart-steam: #2f8fd0;
+  --chart-epic: #c27f2c;
 }
 
 * {
@@ -238,4 +243,155 @@ button:disabled {
 /* ===== Store carousels: hidden scrollbar (arrows page instead) ===== */
 .carousel-row::-webkit-scrollbar {
   display: none;
+}
+
+/* ===== Random-game drum (slot-machine reel, CSS 3D) =====
+   Geometry (face size, radius, perspective) lives in RandomPage.tsx; these
+   are the looks only. */
+.drum-window {
+  position: relative;
+  overflow: hidden;
+  border-radius: 16px;
+  background: radial-gradient(120% 80% at 50% 50%, #18222f 0%, #0d131b 100%);
+  border: 1px solid var(--border);
+  box-shadow: inset 0 0 60px rgba(0, 0, 0, 0.7), 0 12px 40px rgba(0, 0, 0, 0.45);
+}
+.drum {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+.drum-face {
+  position: absolute;
+  inset: 0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--panel-2);
+  backface-visibility: hidden;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.07);
+}
+.drum-face .fill {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.drum-face .blur {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: blur(14px) brightness(0.55) saturate(1.2);
+  transform: scale(1.25);
+}
+.drum-face .contain {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  height: 100%;
+  width: auto;
+  object-fit: contain;
+}
+.drum-face .name {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 12px;
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--text);
+}
+/* Top/bottom fade sells the curvature of the reel. */
+.drum-shade {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    #0d131b 0%,
+    rgba(13, 19, 27, 0) 30%,
+    rgba(13, 19, 27, 0) 70%,
+    #0d131b 100%
+  );
+}
+/* Winner frame around the front face — lights up when the reel stops. */
+.drum-marker {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  top: 50%;
+  border-top: 2px solid var(--accent);
+  border-bottom: 2px solid var(--accent);
+  opacity: 0;
+  transition: opacity 0.35s ease;
+  pointer-events: none;
+  box-shadow: 0 0 28px rgba(87, 184, 240, 0.35), inset 0 0 28px rgba(87, 184, 240, 0.12);
+}
+.drum-marker.on {
+  opacity: 1;
+}
+.drum-marker::before,
+.drum-marker::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  margin-top: -8px;
+  border: 8px solid transparent;
+}
+.drum-marker::before {
+  left: -10px;
+  border-left-color: var(--accent);
+}
+.drum-marker::after {
+  right: -10px;
+  border-right-color: var(--accent);
+}
+/* Result panel slides in once the reel has stopped. */
+@keyframes rnd-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.rnd-result {
+  animation: rnd-in 0.35s ease both;
+}
+.rnd-desc {
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.rnd-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 4px 10px;
+  border-radius: 6px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  font-size: 12.5px;
+  color: var(--text);
+}
+.rnd-chip button {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 13px;
+  line-height: 1;
+}
+.rnd-chip button:hover {
+  color: var(--text);
 }

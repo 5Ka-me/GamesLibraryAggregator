@@ -20,8 +20,15 @@ See the [root README](../README.md) for features, quick start and configuration.
     title into the exact `GameDto` shape the backend used to return.
   - `services/secretStore.ts` — Epic OAuth session + optional Steam API key, encrypted at rest via
     `safeStorage` (Windows DPAPI).
-  - `services/steamSync.ts` — Steam library / recently-played / achievements via the official Web
-    API (web-session token or API key).
+  - `services/steamSync.ts` — Steam library / recently-played / achievements. Library and recent
+    games use the official Web API (web-session token or API key); achievements use the Web API
+    with an API key, otherwise the profile's community achievement XML (as the signed-in user, so
+    private profiles work) merged with the public `IPlayerService/GetGameAchievements` schema.
+    Whole-library achievement progress comes from one batched `IPlayerService/GetAchievementsProgress`
+    call per 100 games. Steam sync also keeps last-launch, two-week and Steam Deck minutes.
+  - `services/playtimeHistory.ts` — one playtime snapshot per day (written on every sync,
+    `%APPDATA%/steam-egs-launcher/playtime-history.json`, 400 days) so the Statistics page can show
+    real deltas — the stores only report lifetime totals.
   - `services/epicSync.ts` — EGS OAuth (code exchange, auto-refresh), library + catalog + playtime
     via the same private Epic Launcher endpoints legendary uses; games-only filtering; import of an
     installed Epic Games Launcher session (DPAPI).
@@ -51,7 +58,7 @@ See the [root README](../README.md) for features, quick start and configuration.
     approximate cross-currency price comparison.
   - `services/steamLauncher.ts` — `steam://` deep links; store pages open in the Steam client when installed.
 - **preload/** — a small typed `window.launcher` bridge (contextIsolation on).
-- **renderer/** — React UI: library, store (home/sections/wishlist/search), unified game page
+- **renderer/** — React UI: library, store (home/sections/wishlist/search), random-game reel, statistics (Replay-style overview + the whole library as Steam's profile games list, batched), unified game page
   (platform tabs, launch & install, price comparison, achievements, screenshot lightbox),
   statistics, settings.
 
@@ -94,15 +101,20 @@ The app icon lives in `resources/icon.ico` / `icon.png` and is generated (depend
 ### Releasing an update
 
 Auto-update is wired to **GitHub Releases** of this repo (electron-updater; the repo must stay
-public). To ship a version:
+public). One command from the repo root, on a clean `main`:
 
 ```bash
-# 1. bump "version" in steam-egs-launcher/package.json (semver)
-# 2. build + upload a draft release (needs a GitHub token with repo scope):
-set GH_TOKEN=<your token>
-npm run release            # from steam-egs-launcher/
-# 3. publish the draft on GitHub — installed launchers pick it up
+npm run release 0.3.0
 ```
+
+It sets the launcher version, commits `release v0.3.0`, tags `v0.3.0` and pushes. The tag push
+runs `.github/workflows/release.yml` on a Windows runner: typecheck → fetch `legendary.exe` →
+`electron-builder --publish always` → the release is published immediately with generated notes
+and the installer, `latest.yml` and blockmap attached — installed launchers pick it up on their
+next check. No tokens on your machine; the workflow uses the repository's own `GITHUB_TOKEN`.
+
+The old local path still exists as `npm run release:local` inside `steam-egs-launcher/`
+(needs `GH_TOKEN` with `contents: write`), but CI is the intended way.
 
 Installed apps check ~20 s after startup, download in the background and show a quiet
 "Restart to update" banner (Settings → Updates has a manual check). Nothing is code-signed yet,

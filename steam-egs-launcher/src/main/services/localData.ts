@@ -1,6 +1,7 @@
 import { app } from 'electron';
 import { join } from 'path';
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'fs';
+import { recordPlaytimeSnapshot } from './playtimeHistory';
 
 // Local library database — the launcher's replacement for the cloud Postgres.
 // One JSON file in userData holding the per-store library entries and account
@@ -28,6 +29,12 @@ export interface StoredEntry {
   playtimeMinutes?: number | null;
   /** ISO date the entry was first seen (acquisition proxy). */
   acquisitionDate?: string | null;
+  /** Steam: last launch (rtime_last_played). Epic doesn't report it. */
+  lastPlayedAt?: string | null;
+  /** Steam: minutes in the last two weeks (present only when played recently). */
+  playtime2WeeksMinutes?: number | null;
+  /** Steam: minutes on Steam Deck (lifetime). */
+  playtimeDeckMinutes?: number | null;
 }
 
 export interface SteamAccountData {
@@ -144,16 +151,21 @@ export function replaceEntries(source: EntrySource, fresh: StoredEntry[]): numbe
   const merged = fresh.map((e) => {
     const old = prev.get(e.externalId);
     const best = Math.max(old?.playtimeMinutes ?? 0, e.playtimeMinutes ?? 0);
+    // Last launch only ever moves forward.
+    const lastPlayedAt =
+      [old?.lastPlayedAt, e.lastPlayedAt].filter((x): x is string => !!x).sort().pop() ?? null;
     return {
       ...e,
       source,
       playtimeMinutes: best > 0 ? best : e.playtimeMinutes ?? null,
       acquisitionDate: old?.acquisitionDate ?? e.acquisitionDate ?? now,
+      lastPlayedAt,
     };
   });
 
   data.entries = [...data.entries.filter((e) => e.source !== source), ...merged];
   save();
+  recordPlaytimeSnapshot(data.entries);
   return merged.length;
 }
 

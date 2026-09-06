@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { api, useI18n } from '@app/shared';
-import { LibraryIcon, StoreIcon, StatsIcon, SettingsIcon, PowerIcon } from './icons';
+import { LibraryIcon, StoreIcon, StatsIcon, SettingsIcon, PowerIcon, DiceIcon } from './icons';
 
 // App logo mark — the fanned-cards icon (same motif as the exe icon).
 const LogoMark: React.FC = () => (
@@ -33,6 +33,7 @@ const rowBase: React.CSSProperties = {
 const items = [
   { to: '/', labelKey: 'sidebar.library', Icon: LibraryIcon, end: true },
   { to: '/store', labelKey: 'sidebar.store', Icon: StoreIcon, end: false },
+  { to: '/random', labelKey: 'sidebar.random', Icon: DiceIcon, end: false },
   { to: '/stats', labelKey: 'sidebar.stats', Icon: StatsIcon, end: false },
   { to: '/settings', labelKey: 'sidebar.settings', Icon: SettingsIcon, end: false },
 ];

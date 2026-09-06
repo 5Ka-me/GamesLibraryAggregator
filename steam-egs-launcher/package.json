@@ -1,6 +1,6 @@
 {
   "name": "steam-egs-launcher",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Desktop launcher for the Steam + EGS library aggregator",
   "author": "5Ka",
@@ -13,7 +13,7 @@
     "fetch:legendary": "node scripts/fetch-legendary.mjs",
     "package": "electron-vite build && electron-builder --win --publish never",
     "gen:icon": "node scripts/generate-icon.mjs",
-    "release": "electron-vite build && electron-builder --win --publish always"
+    "release:local": "electron-vite build && electron-builder --win --publish always"
   },
   "devDependencies": {
     "@app/shared": "*",

@@ -1,5 +1,5 @@
 import { app, BrowserWindow, session, type Session } from 'electron';
-import { storeSteamLibrary } from './steamSync';
+import { ownedGameFromApi, storeSteamLibrary } from './steamSync';
 import { clearStore } from './localData';
 import { clearSteamApiKey } from './secretStore';
 import { httpJson } from './http';
@@ -159,22 +159,127 @@ function openLogin(remember: boolean): Promise<string> {
   });
 }
 
-/** Web API access token for one session partition (memory-cached, 30 min). */
+const STORE_ORIGIN = 'https://store.steampowered.com';
+const COMMUNITY_ORIGIN = 'https://steamcommunity.com';
+
+const formHeaders = (origin: string) => ({
+  'Content-Type': 'application/x-www-form-urlencoded',
+  Origin: origin,
+  Referer: `${origin}/`,
+});
+
+/** Expiry (ms) of the `steamLoginSecure` access token set for `origin`, or 0 when absent/unreadable. */
+async function accessTokenExpiry(ses: Session, origin: string): Promise<number> {
+  const [cookie] = await ses.cookies.get({ url: `${origin}/`, name: 'steamLoginSecure' });
+  if (!cookie) return 0;
+  try {
+    const jwt = decodeURIComponent(cookie.value).split('||')[1] ?? '';
+    const payload = JSON.parse(Buffer.from(jwt.split('.')[1] ?? '', 'base64url').toString('utf8'));
+    return typeof payload?.exp === 'number' ? payload.exp * 1000 : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Renews the `steamLoginSecure` access token of one Steam origin from the
+ * long-lived refresh cookie on login.steampowered.com — the same two-step
+ * exchange Steam's own page script performs when a tab finds its token
+ * expired. The access token lives about a day; the refresh cookie for months.
+ * Without this, a remembered sign-in silently stopped working after a day
+ * (every Web API call failed while Settings still said "signed in").
+ *
+ * Cookies must be opted into explicitly: Electron's `ses.fetch` treats a
+ * request carrying a foreign `Origin` header as cross-origin and drops them.
+ */
+async function refreshSession(ses: Session, origin: string = STORE_ORIGIN): Promise<boolean> {
+  try {
+    const res = await ses.fetch('https://login.steampowered.com/jwt/ajaxrefresh', {
+      method: 'POST',
+      credentials: 'include',
+      headers: formHeaders(origin),
+      body: new URLSearchParams({ redir: `${origin}/` }).toString(),
+    });
+    if (!res.ok) return false;
+    const json = (await res.json()) as {
+      success?: boolean;
+      steamID?: string;
+      login_url?: string;
+      nonce?: string;
+      auth?: string;
+      transfer_info?: { url: string; params: Record<string, string> }[];
+    };
+    if (!json?.success) return false;
+    // Either a list of per-domain transfers or a single primary-domain one.
+    const transfers =
+      json.transfer_info?.length
+        ? json.transfer_info
+        : json.login_url && json.nonce && json.auth
+          ? [{ url: json.login_url, params: { nonce: json.nonce, auth: json.auth } }]
+          : [];
+    if (transfers.length === 0) return false;
+    // Each transfer sets the fresh cookie on one Steam domain (store, community, …).
+    const results = await Promise.all(
+      transfers.map((t) =>
+        ses
+          .fetch(t.url, {
+            method: 'POST',
+            credentials: 'include',
+            headers: formHeaders(origin),
+            body: new URLSearchParams({ ...t.params, steamID: json.steamID ?? '' }).toString(),
+          })
+          .then((r) => r.ok)
+          .catch(() => false)
+      )
+    );
+    return results.some(Boolean);
+  } catch {
+    return false;
+  }
+}
+
+/** One attempt at the Web API token from the current store session. */
+async function fetchWebApiToken(ses: Session): Promise<string | null> {
+  const res = await ses.fetch('https://store.steampowered.com/pointssummary/ajaxgetasyncconfig', {
+    credentials: 'include',
+  });
+  if (!res.ok) return null;
+  const json = (await res.json()) as { data?: { webapi_token?: string } };
+  return json?.data?.webapi_token ?? null;
+}
+
+/**
+ * Web API access token for one session partition (memory-cached, 30 min).
+ * An expired store token is refreshed once before giving up.
+ */
 async function mintToken(ses: Session, partition: string): Promise<string | null> {
   if (cachedToken?.partition === partition && Date.now() - cachedToken.at < TOKEN_TTL_MS) {
     return cachedToken.value;
   }
   try {
-    const res = await ses.fetch('https://store.steampowered.com/pointssummary/ajaxgetasyncconfig');
-    if (!res.ok) return null;
-    const json = (await res.json()) as { data?: { webapi_token?: string } };
-    const token = json?.data?.webapi_token;
+    let token = await fetchWebApiToken(ses);
+    if (!token && (await refreshSession(ses))) token = await fetchWebApiToken(ses);
     if (!token) return null;
     cachedToken = { partition, value: token, at: Date.now() };
     return token;
   } catch {
     return null;
   }
+}
+
+/**
+ * Fetches a steamcommunity.com URL as the signed-in user (so private profiles
+ * work), refreshing the community access token first when it has expired.
+ * Falls back to an anonymous request when nobody is signed in — public
+ * profiles are readable either way.
+ */
+export async function communityFetch(url: string): Promise<Response> {
+  const ses = await getActiveSteamSession();
+  if (!ses) return fetch(url);
+  if ((await accessTokenExpiry(ses, COMMUNITY_ORIGIN)) < Date.now() + 60_000) {
+    await refreshSession(ses, COMMUNITY_ORIGIN);
+  }
+  return ses.fetch(url, { credentials: 'include' });
 }
 
 /**
@@ -249,12 +354,7 @@ export async function steamLogin(remember: boolean): Promise<SteamLoginResult> {
     fetchOwnedGames(steamId, token),
   ]);
 
-  storeSteamLibrary(
-    steamId,
-    games.map((g) => ({ appId: g.appid, name: g.name, playtimeForever: g.playtime_forever ?? 0 })),
-    profile.personaName,
-    profile.country
-  );
+  storeSteamLibrary(steamId, games.map(ownedGameFromApi), profile.personaName, profile.country);
 
   return {
     success: true,
@@ -264,10 +364,17 @@ export async function steamLogin(remember: boolean): Promise<SteamLoginResult> {
   };
 }
 
-/** Whether a persisted Steam session is still valid (silent, no window). */
+/**
+ * Whether a persisted Steam session is still usable (silent, no window). A
+ * cookie alone isn't proof — its token may have expired — so this actually
+ * obtains (refreshing if needed) the Web API token the services depend on.
+ */
 export async function steamStatus(): Promise<{ loggedIn: boolean; steamId?: string }> {
-  const id = await readSteamId(steamSession(true));
-  return id ? { loggedIn: true, steamId: id } : { loggedIn: false };
+  const ses = steamSession(true);
+  const id = await readSteamId(ses);
+  if (!id) return { loggedIn: false };
+  const token = await mintToken(ses, PERSIST_PARTITION);
+  return token ? { loggedIn: true, steamId: id } : { loggedIn: false };
 }
 
 /**

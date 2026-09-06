@@ -122,6 +122,7 @@ async function graphql(query: string, variables: Record<string, unknown>): Promi
 const ELEMENT_FIELDS = `
   title
   namespace
+  offerType
   description
   effectiveDate
   keyImages { type url }
@@ -152,7 +153,7 @@ const RATING_QUERY = `
 const OFFERS_QUERY = `
   query($ns: String!, $country: String!, $locale: String!) {
     Catalog {
-      catalogOffers(namespace: $ns, params: { count: 75, country: $country, locale: $locale }) {
+      catalogOffers(namespace: $ns, params: { count: 75, country: $country }) {
         elements { ${ELEMENT_FIELDS} }
       }
     }
@@ -172,12 +173,50 @@ const SEARCH_QUERY = `
   }
 `;
 
+// "Godfall" is sold as "Godfall Ultimate Edition": an edition suffix on top of
+// the exact title still means the same game. Anything else ("Remastered",
+// a sequel, a soundtrack) does not.
+const EDITION_SUFFIX =
+  /^(standard|ultimate|definitive|deluxe|digitaldeluxe|complete|gold|premium|enhanced|special|legendary|anniversary|collectors|gameoftheyear|goty)?(edition)?$/;
+
+function isBaseGame(el: any): boolean {
+  if (el?.offerType === 'BASE_GAME') return true;
+  const paths: string[] = (el?.categories ?? []).map((c: any) => c?.path).filter(Boolean);
+  return paths.includes('games/edition/base');
+}
+
+/** Same game under a different edition name (base-game offers only). */
+function isEditionOf(el: any, want: string): boolean {
+  const got = el?.title ? normalize(el.title) : '';
+  return got.startsWith(want) && got !== want && isBaseGame(el) && EDITION_SUFFIX.test(got.slice(want.length));
+}
+
+/**
+ * Picks the offer for `title` out of search results. Exact normalized-title
+ * match first, then "<title> <Edition>" base games; nothing looser — a wrong
+ * match would produce a bogus price comparison, which is worse than none.
+ */
 function pickElement(elements: any[], title: string): any | null {
   if (!elements?.length) return null;
   const want = normalize(title);
-  // Exact normalized-title match only — a wrong match would produce a bogus
-  // price comparison, which is worse than none.
-  return elements.find((el) => el?.title && normalize(el.title) === want) ?? null;
+  return (
+    elements.find((el) => el?.title && normalize(el.title) === want) ??
+    elements.find((el) => isEditionOf(el, want)) ??
+    null
+  );
+}
+
+/**
+ * Picks the offer out of a game's own namespace, where every offer belongs to
+ * this game (base game, DLC, upgrades): exact title, then a base-game edition
+ * named after it, then the only/first base-game offer. Add-ons never win.
+ */
+function pickNamespaceElement(elements: any[], title: string): any | null {
+  const exact = pickElement(elements, title);
+  if (exact) return exact;
+  const base = (elements ?? []).filter(isBaseGame);
+  const want = normalize(title);
+  return base.find((el) => el?.title && normalize(el.title).startsWith(want)) ?? base[0] ?? null;
 }
 
 function mapElement(el: any): EpicDetails {
@@ -283,7 +322,7 @@ export async function resolveEpicStoreUrl(ns: string, title: string): Promise<st
     const { country, locale } = region('en');
     const resp = await graphql(OFFERS_QUERY, { ns, country, locale });
     const elements = resp?.data?.Catalog?.catalogOffers?.elements ?? [];
-    const el = pickElement(elements, title) ?? elements[0] ?? null;
+    const el = pickNamespaceElement(elements, title) ?? elements[0] ?? null;
     return (el ? mapElement(el).storeUrl : null) ?? null;
   } catch {
     return null;
@@ -326,7 +365,7 @@ async function fetchDetails(
     try {
       const resp = await graphql(OFFERS_QUERY, { ns, country, locale });
       if (resp?.errors?.length && !resp?.data) sawErrors = true;
-      const el = pickElement(resp?.data?.Catalog?.catalogOffers?.elements ?? [], title);
+      const el = pickNamespaceElement(resp?.data?.Catalog?.catalogOffers?.elements ?? [], title);
       if (el) data = mapElement(el);
     } catch {
       sawErrors = true; // fall through to the title search

@@ -46,6 +46,17 @@ export const StatsIcon: React.FC<IconProps> = ({ size = 20 }) => (
   </svg>
 );
 
+export const DiceIcon: React.FC<IconProps> = ({ size = 20 }) => (
+  <svg {...base(size)}>
+    <rect x="3" y="3" width="18" height="18" rx="4" />
+    <circle cx="8" cy="8" r="1.2" fill="currentColor" />
+    <circle cx="16" cy="8" r="1.2" fill="currentColor" />
+    <circle cx="12" cy="12" r="1.2" fill="currentColor" />
+    <circle cx="8" cy="16" r="1.2" fill="currentColor" />
+    <circle cx="16" cy="16" r="1.2" fill="currentColor" />
+  </svg>
+);
+
 export const PowerIcon: React.FC<IconProps> = ({ size = 20 }) => (
   <svg {...base(size)}>
     <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />

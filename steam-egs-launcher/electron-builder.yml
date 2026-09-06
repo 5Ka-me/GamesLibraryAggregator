@@ -3,6 +3,12 @@ productName: GL Aggregator
 directories:
   buildResources: resources
   output: dist
+# The launcher has no runtime npm dependencies (electron-vite bundles everything
+# into out/), so skip electron-builder's "install production dependencies" step.
+# In an npm workspace that step runs `npm install --production` inside this
+# package and prunes the root node_modules — removing app-builder-bin, which
+# electron-builder needs a moment later (CI failed with ENOENT on it).
+npmRebuild: false
 files:
   - out/**
 extraResources:
@@ -20,10 +26,12 @@ nsis:
   perMachine: false
   allowToChangeInstallationDirectory: true
   artifactName: GL-Aggregator-Setup-${version}.${ext}
-# Auto-update channel: GitHub Releases of the public repo. `npm run release`
-# builds and uploads a release draft (needs GH_TOKEN with repo scope);
-# publishing the draft makes every installed launcher pick the update up.
+# Auto-update channel: GitHub Releases of the public repo. Releases are cut by
+# `npm run release <version>` at the repo root → the tag push runs
+# .github/workflows/release.yml, which builds here and publishes the release
+# right away (not a draft) so installed launchers pick the update up.
 publish:
   provider: github
   owner: 5Ka-me
   repo: GamesLibraryAggregator
+  releaseType: release

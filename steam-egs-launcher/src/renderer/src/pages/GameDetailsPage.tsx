@@ -463,7 +463,11 @@ const AchievementsBlock: React.FC<{ appid: number }> = ({ appid }) => {
   }, [appid, lang]);
 
   if (failed || (data && !data.available)) {
-    return <p style={{ color: 'var(--muted)', fontSize: 13 }}>{t('details.achUnavailable')}</p>;
+    return (
+      <p style={{ color: 'var(--muted)', fontSize: 13 }}>
+        {data?.reason === 'auth' ? t('details.achSignIn') : t('details.achUnavailable')}
+      </p>
+    );
   }
   if (!data) return <p style={{ color: 'var(--muted)' }}>{t('lib.loading')}</p>;
 

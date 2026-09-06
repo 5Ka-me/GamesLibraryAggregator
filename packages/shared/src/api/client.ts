@@ -14,6 +14,12 @@ export interface GameEntry {
   namespace?: string | null;
   playtimeMinutes?: number | null;
   acquisitionDate?: string | null;
+  /** Steam only: last launch, ISO. */
+  lastPlayedAt?: string | null;
+  /** Steam only: minutes in the last two weeks. */
+  playtime2WeeksMinutes?: number | null;
+  /** Steam only: lifetime minutes on Steam Deck. */
+  playtimeDeckMinutes?: number | null;
   launchUrl?: string | null;
   installUrl?: string | null;
 }
@@ -72,10 +78,29 @@ export interface SteamAchievement {
 
 export interface SteamGameAchievements {
   available: boolean;
+  /** When unavailable: no usable Steam sign-in vs. Steam has no data for this game/profile. */
+  reason?: 'auth' | 'unavailable';
   gameName?: string | null;
   total: number;
   unlocked: number;
   achievements: SteamAchievement[];
+}
+
+/** Whole-library achievement progress row (IPlayerService/GetAchievementsProgress). */
+export interface SteamAchievementProgress {
+  appId: number;
+  unlocked: number;
+  total: number;
+  /** 0–100. */
+  percentage: number;
+  allUnlocked: boolean;
+}
+
+/** Daily playtime snapshots kept by the launcher (see main/services/playtimeHistory.ts). */
+export interface PlaytimeHistory {
+  version: 1;
+  /** YYYY-MM-DD → `S:<appid>` | `E:<catalogItemId>` → total minutes that day. */
+  days: Record<string, Record<string, number>>;
 }
 
 // Minimal, structured-clone-safe request shape (so it can cross the IPC bridge).
@@ -172,6 +197,11 @@ export const api = {
   syncSteam: () => postJson<{ count: number }>('/api/steam/sync'),
   setSteamRegion: (country: string) => postJson<SteamAccount>('/api/steam/region', { country }),
   getSteamRecent: () => getJson<SteamRecentGame[]>('/api/steam/recent'),
+  /** Launcher only: unlocked/total for many Steam games in a few batched requests. */
+  getSteamAchievementsProgress: (appIds: number[]) =>
+    postJson<SteamAchievementProgress[]>('/api/steam/achievements/progress', { appIds: appIds.join(',') }),
+  /** Launcher only: the daily playtime snapshots the launcher records on each sync. */
+  getPlaytimeHistory: () => getJson<PlaytimeHistory>('/api/stats/playtime-history'),
   getSteamAchievements: (appId: number, lang?: string) =>
     getJson<SteamGameAchievements>(
       `/api/steam/achievements/${appId}${lang ? `?lang=${encodeURIComponent(lang)}` : ''}`

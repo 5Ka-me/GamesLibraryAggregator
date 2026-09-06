@@ -1,13 +1,15 @@
-// Downloads the latest legendary.exe (Windows) into resources/bin/.
+// Downloads legendary.exe (Windows) into resources/bin/.
 // Run: npm run fetch:legendary  (from steam-egs-launcher)
 //
-// legendary is the open-source EGS CLI (https://github.com/derrod/legendary).
-// It is intentionally NOT committed to git — this script fetches it on demand.
+// legendary is the open-source EGS CLI (https://github.com/legendary-gl/legendary,
+// formerly derrod/legendary). It is intentionally NOT committed to git — this
+// script fetches it on demand, also on the release runner.
 //
-// We use GitHub's stable "latest release" download URL (a 302 redirect to the
-// asset) instead of the REST API, which is rate-limited/403s for unauthenticated
-// requests.
-
+// The version is pinned: a release must bundle the CLI the app was tested
+// with, not whatever "latest" happens to be that day (0.21.0 also renamed the
+// asset, which silently broke the old latest/legendary.exe link). Bump
+// LEGENDARY_VERSION deliberately after checking legendary.ts still parses its
+// output.
 import { mkdirSync, writeFileSync, existsSync, statSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
@@ -16,29 +18,35 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const outDir = join(__dirname, '..', 'resources', 'bin');
 const outFile = join(outDir, 'legendary.exe');
 
-const DOWNLOAD_URL = 'https://github.com/derrod/legendary/releases/latest/download/legendary.exe';
+const LEGENDARY_VERSION = process.env.LEGENDARY_VERSION || '0.20.34';
+// Asset name changed in 0.21.0 (legendary_windows_x64.exe); older tags ship legendary.exe.
+const CANDIDATES = ['legendary_windows_x64.exe', 'legendary.exe'].map(
+  (name) => `https://github.com/legendary-gl/legendary/releases/download/${LEGENDARY_VERSION}/${name}`
+);
 
 async function main() {
   mkdirSync(outDir, { recursive: true });
-
-  console.log(`Downloading legendary.exe → ${outFile}`);
-  const res = await fetch(DOWNLOAD_URL, {
-    headers: { 'User-Agent': 'steam-egs-launcher' },
-    redirect: 'follow',
-  });
-  if (!res.ok) {
-    throw new Error(
-      `Download failed: HTTP ${res.status}. ` +
-        `Download legendary.exe manually from https://github.com/derrod/legendary/releases/latest ` +
-        `and place it in ${outDir}`
-    );
+  if (process.env.LEGENDARY_SKIP_IF_PRESENT && existsSync(outFile)) {
+    console.log(`legendary.exe already present at ${outFile} — skipping`);
+    return;
   }
-
-  const buf = Buffer.from(await res.arrayBuffer());
-  writeFileSync(outFile, buf);
-
-  const kb = Math.round(statSync(outFile).size / 1024);
-  console.log(`Done ✅  (${kb} KB)`);
+  console.log(`Downloading legendary ${LEGENDARY_VERSION} → ${outFile}`);
+  let lastStatus = 0;
+  for (const url of CANDIDATES) {
+    const res = await fetch(url, { headers: { 'User-Agent': 'steam-egs-launcher' }, redirect: 'follow' });
+    if (!res.ok) {
+      lastStatus = res.status;
+      continue;
+    }
+    writeFileSync(outFile, Buffer.from(await res.arrayBuffer()));
+    const kb = Math.round(statSync(outFile).size / 1024);
+    console.log(`Done ✅  ${url} (${kb} KB)`);
+    return;
+  }
+  throw new Error(
+    `Download failed (last HTTP ${lastStatus}) for legendary ${LEGENDARY_VERSION}. ` +
+      `Check https://github.com/legendary-gl/legendary/releases and place legendary.exe in ${outDir}`
+  );
 }
 
 main().catch((e) => {

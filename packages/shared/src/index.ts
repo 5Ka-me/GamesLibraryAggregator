@@ -16,6 +16,8 @@ export type {
   SteamGameAchievements,
   ApiRequestInit,
   ApiTransport,
+  SteamAchievementProgress,
+  PlaytimeHistory,
 } from './api/client';
 
 export {

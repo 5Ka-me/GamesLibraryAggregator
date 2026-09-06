@@ -13,6 +13,9 @@ export interface GameEntryDto {
   namespace: string | null;
   playtimeMinutes: number | null;
   acquisitionDate: string | null;
+  lastPlayedAt: string | null;
+  playtime2WeeksMinutes: number | null;
+  playtimeDeckMinutes: number | null;
   launchUrl: string | null;
   installUrl: string | null;
 }
@@ -45,6 +48,9 @@ function toDto(e: StoredEntry): GameEntryDto {
     namespace: e.namespace ?? null,
     playtimeMinutes: e.playtimeMinutes ?? null,
     acquisitionDate: e.acquisitionDate ?? null,
+    lastPlayedAt: e.lastPlayedAt ?? null,
+    playtime2WeeksMinutes: e.playtime2WeeksMinutes ?? null,
+    playtimeDeckMinutes: e.playtimeDeckMinutes ?? null,
     launchUrl: steam
       ? `steam://rungameid/${encodeURIComponent(e.externalId)}`
       : epicLink?.('launch') ?? null,

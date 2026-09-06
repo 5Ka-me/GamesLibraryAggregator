@@ -16,9 +16,11 @@ import {
   setSteamCountry,
   steamAccount,
   steamAchievements,
+  steamAchievementsProgress,
   steamRecent,
   syncSteamLibrary,
 } from './steamSync';
+import { getPlaytimeHistory } from './playtimeHistory';
 import { requireAppId } from './validate';
 
 // The launcher's local API: the `/api/*` contract the renderer and the shared
@@ -63,6 +65,17 @@ async function dispatch(
       return setSteamCountry(body.country ?? '');
     case 'GET /api/steam/recent':
       return steamRecent();
+    case 'POST /api/steam/achievements/progress':
+      return steamAchievementsProgress(
+        (body.appIds ?? '')
+          .split(',')
+          .filter(Boolean)
+          .map((id) => requireAppId(id))
+      );
+
+    // ----- statistics -----
+    case 'GET /api/stats/playtime-history':
+      return getPlaytimeHistory();
 
     // ----- Epic -----
     case 'GET /api/epic/account':

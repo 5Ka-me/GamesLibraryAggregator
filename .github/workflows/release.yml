@@ -1,0 +1,88 @@
+# Builds the Windows installer and publishes a GitHub Release whenever a
+# version tag is pushed. Locally: `npm run release 0.3.0` (see scripts/release.mjs)
+# bumps the version, commits, tags and pushes — everything after that happens here.
+#
+# The release is published immediately (not a draft) so installed launchers pick
+# the update up via electron-updater without a manual step; release notes are
+# generated from the commits since the previous tag.
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write # create the release and upload the installer
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history: release notes need the previous tag
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Check the tag matches the launcher version
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./steam-egs-launcher/package.json').version")"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::Tag v$TAG does not match steam-egs-launcher/package.json version $PKG"
+            exit 1
+          fi
+          echo "Releasing v$PKG"
+
+      - name: Install
+        run: npm ci
+
+      - name: Build shared package
+        run: npm run build:shared
+
+      - name: Typecheck launcher
+        run: npm run typecheck --workspace steam-egs-launcher
+
+      - name: Fetch legendary.exe (bundled EGS CLI)
+        run: npm run fetch:legendary --workspace steam-egs-launcher
+
+      - name: Build and publish installer
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEBUG: electron-builder
+        run: |
+          set -o pipefail
+          if ! npm run release:local --workspace steam-egs-launcher 2>&1 | tee build.log; then
+            # Step logs need a GitHub sign-in to view; annotations don't — so the
+            # tail of the build output is surfaced as an error annotation.
+            MSG="$(tail -c 3500 build.log | tr -d '\r' | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}')"
+            echo "::error title=electron-builder failed::${MSG}"
+            exit 1
+          fi
+
+      - name: Generate release notes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="$GITHUB_REF_NAME"
+          PREV="$(git tag --list 'v*.*.*' --sort=-v:refname | grep -vx "$TAG" | head -n1)"
+          if [ -n "$PREV" ]; then
+            gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+              -f tag_name="$TAG" -f previous_tag_name="$PREV" --jq .body > notes.md
+          else
+            gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+              -f tag_name="$TAG" --jq .body > notes.md
+          fi
+          gh release edit "$TAG" --title "GL Aggregator $TAG" --notes-file notes.md
