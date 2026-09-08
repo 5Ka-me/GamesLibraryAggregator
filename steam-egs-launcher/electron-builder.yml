@@ -28,6 +28,10 @@ nsis:
   oneClick: true
   perMachine: false
   runAfterFinish: true
+  # Recreate the shortcuts on every install/update, so an update never leaves
+  # a desktop shortcut pointing at a stale path (blank icon).
+  createDesktopShortcut: always
+  createStartMenuShortcut: false
   artifactName: GL-Aggregator-Setup-${version}.${ext}
 # Auto-update channel: GitHub Releases of the public repo. Releases are cut by
 # `npm run release <version>` at the repo root → the tag push runs

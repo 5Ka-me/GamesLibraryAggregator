@@ -18,8 +18,8 @@ import {
 // Statistics — two tabs.
 //   Overview: a Steam-Replay-like dashboard computed locally from data the
 //     launcher already holds (library playtimes, last-launch dates, the batched
-//     achievement progress, the daily playtime snapshots) plus one cheap extra:
-//     store genres for the top-30 games by hours (cached a day by the main).
+//     achievement progress, the daily playtime snapshots). Nothing here talks
+//     to the stores directly — the page must stay cheap on the user's tokens.
 //   All games: the whole library as Steam's profile "Games" page — capsule,
 //     hours, last launch, achievement bar — rendered in batches of 60.
 // Period is honest: Steam has no per-day history, so "this year" means games
@@ -31,7 +31,6 @@ type GamesSort = 'hours' | 'name' | 'lastPlayed' | 'ach';
 
 const ALL: Source[] = [...SOURCE_IDS];
 const PAGE = 60;
-const GENRE_TOP_N = 30;
 const FORGOTTEN_DAYS = 180;
 const CHART: Record<Source, string> = { Steam: 'var(--chart-steam)', Epic: 'var(--chart-epic)' };
 
@@ -40,7 +39,6 @@ let cachedGames: Game[] | null = null;
 let cachedRecent: SteamRecentGame[] | null = null;
 let cachedProgress: { key: string; map: Map<number, SteamAchievementProgress> } | null = null;
 let cachedHistory: PlaytimeHistory | null = null;
-const genreCache = new Map<string, string[]>();
 
 // ---------- rows ----------
 
@@ -266,47 +264,6 @@ function useProgress(games: Game[] | null): Map<number, SteamAchievementProgress
   return map;
 }
 
-function useGenres(top: Row[], lang: string): { map: Map<string, string[]>; done: number } {
-  const [version, setVersion] = useState(0);
-  useEffect(() => {
-    let alive = true;
-    const queue = top.filter((r) => !genreCache.has(`${r.title}|${lang}`));
-    if (queue.length === 0) return;
-    // Two at a time: the main process caches each answer for a day, so this
-    // costs a burst of requests once, then nothing.
-    let i = 0;
-    const worker = async () => {
-      while (alive && i < queue.length) {
-        const r = queue[i++];
-        const key = `${r.title}|${lang}`;
-        try {
-          const genres = r.steamId
-            ? (await window.launcher.storeAppDetails(parseInt(r.steamId, 10), lang)).genres
-            : ((await window.launcher.epicStoreDetails(r.title, r.game.entries.find((e) => e.source === 'Epic')?.namespace ?? null, lang))?.genres ?? []);
-          genreCache.set(key, genres);
-        } catch {
-          genreCache.set(key, []);
-        }
-        if (alive) setVersion((v) => v + 1);
-      }
-    };
-    void Promise.all([worker(), worker()]);
-    return () => {
-      alive = false;
-    };
-  }, [top, lang]);
-  const map = useMemo(() => {
-    const m = new Map<string, string[]>();
-    for (const r of top) {
-      const g = genreCache.get(`${r.title}|${lang}`);
-      if (g) m.set(r.title, g);
-    }
-    return m;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [top, lang, version]);
-  return { map, done: map.size };
-}
-
 // ---------- page ----------
 
 const StatsPage: React.FC = () => {
@@ -365,8 +322,6 @@ const StatsPage: React.FC = () => {
   }, [rows, period, year]);
 
   const top = useMemo(() => [...scoped].filter((r) => r.minutes > 0).sort((a, b) => b.minutes - a.minutes), [scoped]);
-  const topForGenres = useMemo(() => top.slice(0, GENRE_TOP_N), [top]);
-  const genres = useGenres(topForGenres, lang);
 
   const toggleSource = (s: string) =>
     setSel((prev) => {
@@ -420,14 +375,39 @@ const StatsPage: React.FC = () => {
       .slice(0, 5);
     const deck = scoped.reduce((s, r) => s + r.deckMinutes, 0);
     const steamMinutes = bySrc.find((b) => b.source === 'Steam')?.minutes ?? 0;
-    // Genres by hours over the top-N rows.
-    const genreMinutes = new Map<string, number>();
-    for (const r of topForGenres) {
-      for (const g of genres.map.get(r.title) ?? []) genreMinutes.set(g, (genreMinutes.get(g) ?? 0) + r.minutes);
+    // EGS games by year added — Epic reports real acquisition dates (Steam's
+    // "acquisition" is only the first sync, so it is deliberately left out).
+    const egsYears = new Map<number, { got: number; played: number }>();
+    if (sel.includes('Epic')) {
+      for (const r of rows) {
+        const e = r.game.entries.find((x) => x.source === 'Epic');
+        if (!e?.acquisitionDate) continue;
+        const y = new Date(e.acquisitionDate).getFullYear();
+        if (!Number.isFinite(y)) continue;
+        const cur = egsYears.get(y) ?? { got: 0, played: 0 };
+        cur.got++;
+        if ((e.playtimeMinutes ?? 0) > 0) cur.played++;
+        egsYears.set(y, cur);
+      }
     }
-    const genreTop = [...genreMinutes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);
-    return { total, minutes, played, backlog, buckets, bySrc, withAch: withAch.length, achUnlocked, achTotal, avgPct, perfect, almost, months, forgotten, deck, steamMinutes, genreTop };
-  }, [scoped, rows, lang, topForGenres, genres.map]);
+    const egsByYear = [...egsYears.entries()].sort((a, b) => a[0] - b[0]).map(([y, v]) => ({ year: y, ...v }));
+    // Completion vs hours: average achievement % per playtime band.
+    const bands = [
+      { id: 'lt1', min: 1, max: 60 },
+      { id: '1to10', min: 60, max: 600 },
+      { id: '10to50', min: 600, max: 3000 },
+      { id: 'gt50', min: 3000, max: Infinity },
+    ];
+    const completion = bands.map((b) => {
+      const rs = withAch.filter((r) => r.minutes >= b.min && r.minutes < b.max);
+      return {
+        id: b.id,
+        n: rs.length,
+        avg: rs.length ? Math.round(rs.reduce((sum, r) => sum + r.progress!.percentage, 0) / rs.length) : 0,
+      };
+    });
+    return { total, minutes, played, backlog, buckets, bySrc, withAch: withAch.length, achUnlocked, achTotal, avgPct, perfect, almost, months, forgotten, deck, steamMinutes, egsByYear, completion };
+  }, [scoped, rows, sel, lang]);
 
   // ----- history deltas -----
   const hist = useMemo(() => {
@@ -495,7 +475,7 @@ const StatsPage: React.FC = () => {
   const maxBucket = Math.max(1, ...ov.buckets.map((b) => b.n));
   const maxTop = top[0]?.minutes ?? 0;
   const maxMonth = Math.max(1, ...ov.months.map((m) => m.n));
-  const maxGenre = ov.genreTop[0]?.[1] ?? 0;
+  const maxEgsYear = Math.max(1, ...ov.egsByYear.map((y) => y.got));
   const maxSrcMin = Math.max(1, ...ov.bySrc.map((b) => b.minutes));
   const maxSrcGames = Math.max(1, ...ov.bySrc.map((b) => b.games));
   const H = t('details.hours');
@@ -627,14 +607,38 @@ const StatsPage: React.FC = () => {
               {ov.withAch === 0 && <p style={{ margin: 0, fontSize: 13, color: 'var(--muted)' }}>{t('stats.achNone')}</p>}
             </Card>
 
-            {/* ===== Genres ===== */}
-            <Card title={t('stats.genres')} note={t('stats.genresNote', { n: Math.min(GENRE_TOP_N, topForGenres.length), d: genres.done })}>
-              {ov.genreTop.length === 0 ? (
-                <p style={{ margin: 0, fontSize: 13, color: 'var(--muted)' }}>{genres.done < topForGenres.length ? t('lib.loading') : t('stats.noPlaytime')}</p>
+            {/* ===== Completion vs hours ===== */}
+            <Card title={t('stats.completion')} note={t('stats.completionNote')}>
+              {ov.withAch === 0 ? (
+                <p style={{ margin: 0, fontSize: 13, color: 'var(--muted)' }}>{t('stats.achNone')}</p>
               ) : (
-                ov.genreTop.map(([g, m]) => <BarRow key={g} label={g} value={m} max={maxGenre} valueLabel={`${hours(m)} ${H}`} />)
+                ov.completion.map((b) => (
+                  <BarRow
+                    key={b.id}
+                    label={t(`stats.bucket.${b.id}`)}
+                    value={b.avg}
+                    max={100}
+                    valueLabel={b.n ? t('stats.completionVal', { p: b.avg, n: b.n }) : '—'}
+                  />
+                ))
               )}
             </Card>
+
+            {/* ===== EGS games by year added ===== */}
+            {ov.egsByYear.length > 0 && (
+              <Card title={t('stats.egsYears')} note={t('stats.egsYearsNote')}>
+                {ov.egsByYear.map((y) => (
+                  <BarRow
+                    key={y.year}
+                    label={String(y.year)}
+                    value={y.got}
+                    max={maxEgsYear}
+                    valueLabel={`${y.got} · ${t('stats.launched', { n: y.played })}`}
+                    color={CHART.Epic}
+                  />
+                ))}
+              </Card>
+            )}
 
             {/* ===== Top by playtime ===== */}
             <Card title={t('stats.topByPlaytime')}>
