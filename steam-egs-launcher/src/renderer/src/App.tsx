@@ -35,6 +35,7 @@ const App: React.FC = () => (
           <Routes>
             <Route element={<AppLayout />}>
               <Route path="/" element={<LibraryPage />} />
+              <Route path="/library/:key" element={<LibraryPage />} />
               <Route path="/store" element={<StorePage />} />
               <Route path="/store/section/:id" element={<SectionPage />} />
               <Route path="/store/app/:appid" element={<GameDetailsPage />} />

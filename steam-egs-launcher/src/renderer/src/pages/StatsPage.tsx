@@ -22,10 +22,10 @@ import {
 //     to the stores directly — the page must stay cheap on the user's tokens.
 //   All games: the whole library as Steam's profile "Games" page — capsule,
 //     hours, last launch, achievement bar — rendered in batches of 60.
-// Period is honest: Steam has no per-day history, so "this year" means games
-// launched this year (lifetime hours), "2 weeks" uses Steam's exact figure.
+// Period is honest: "2 weeks" uses Steam's exact two-week figure; there is
+// no per-day history from the stores, so no other period is offered.
 
-type Period = 'all' | 'year' | '2w';
+type Period = 'all' | '2w';
 type Tab = 'overview' | 'games';
 type GamesSort = 'hours' | 'name' | 'lastPlayed' | 'ach';
 
@@ -314,12 +314,10 @@ const StatsPage: React.FC = () => {
   const rows = useMemo(() => (games ? buildRows(games, sel, recentMap, progress) : []), [games, sel, recentMap, progress]);
 
   // ----- period scope -----
-  const year = new Date().getFullYear();
   const scoped = useMemo<Row[]>(() => {
     if (period === '2w') return rows.filter((r) => r.min2w > 0).map((r) => ({ ...r, minutes: r.min2w, bySource: [{ source: 'Steam' as Source, minutes: r.min2w }] }));
-    if (period === 'year') return rows.filter((r) => (r.lastPlayedAt && new Date(r.lastPlayedAt).getFullYear() === year) || r.min2w > 0);
     return rows;
-  }, [rows, period, year]);
+  }, [rows, period]);
 
   const top = useMemo(() => [...scoped].filter((r) => r.minutes > 0).sort((a, b) => b.minutes - a.minutes), [scoped]);
 
@@ -417,7 +415,7 @@ const StatsPage: React.FC = () => {
     const first = days[0];
     const last = days[days.length - 1];
     if (first === last) return { since: first, hours: null as number | null, gainers: [] as { row: Row; minutes: number }[] };
-    const baselineDay = period === 'year' ? days.find((d) => d >= `${year}-01-01`) ?? first : period === '2w' ? days.find((d) => d >= new Date(Date.now() - 14 * 86_400_000).toISOString().slice(0, 10)) ?? first : first;
+    const baselineDay = period === '2w' ? days.find((d) => d >= new Date(Date.now() - 14 * 86_400_000).toISOString().slice(0, 10)) ?? first : first;
     const base = history.days[baselineDay];
     const cur = history.days[last];
     const byKey = new Map<string, Row>();
@@ -437,7 +435,7 @@ const StatsPage: React.FC = () => {
     }
     gainers.sort((a, b) => b.minutes - a.minutes);
     return { since: baselineDay, hours: total / 60, gainers: gainers.slice(0, 3) };
-  }, [history, rows, sel, period, year]);
+  }, [history, rows, sel, period]);
 
   // ----- all-games tab -----
   const [query, setQuery] = useState('');
@@ -506,14 +504,13 @@ const StatsPage: React.FC = () => {
             <Pills
               items={[
                 { id: 'all', label: t('stats.periodAll') },
-                { id: 'year', label: t('stats.periodYear', { y: year }) },
                 { id: '2w', label: t('stats.period2w') },
               ]}
               active={period}
               onPick={(id) => setPeriod(id as Period)}
             />
             <span style={{ fontSize: 12, color: 'var(--muted)' }}>
-              {period === 'year' ? t('stats.periodYearNote') : period === '2w' ? t('stats.period2wNote') : ''}
+              {period === '2w' ? t('stats.period2wNote') : ''}
             </span>
           </div>
 

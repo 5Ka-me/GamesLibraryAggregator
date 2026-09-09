@@ -18,6 +18,9 @@ extraResources:
     filter:
       - '**/*'
       - '!README.md'
+  # Window icon for the running app (taskbar) — read from process.resourcesPath.
+  - from: resources/icon.ico
+    to: icon.ico
 win:
   target: nsis
   icon: resources/icon.ico

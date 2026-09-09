@@ -2,7 +2,7 @@ import { getSteamApiKey, setSteamApiKey } from './secretStore';
 import { getSteamAccount, replaceEntries, updateSteamAccount, type StoredEntry } from './localData';
 import { communityFetch, getWebApiToken, STEAM_WEB_API } from './steamAuth';
 import { cached, TTL_PROGRESS_MS } from './cache';
-import { httpJson } from './http';
+import { BROWSER_UA, httpFetch, httpJson } from './http';
 import { normalizeCountry } from './validate';
 
 // Steam account, library, recent games and achievements (the launcher's own
@@ -16,6 +16,7 @@ const API = STEAM_WEB_API;
 
 export interface SteamAccountInfo {
   configured: boolean;
+  avatarUrl?: string | null;
   steamId?: string | null;
   personaName?: string | null;
   country?: string | null;
@@ -75,6 +76,7 @@ export function steamAccount(): SteamAccountInfo {
     configured: !!acc.steamId,
     steamId: acc.steamId ?? null,
     personaName: acc.personaName ?? null,
+    avatarUrl: acc.avatarUrl ?? null,
     country: acc.country ?? null,
   };
 }
@@ -86,7 +88,12 @@ export function setSteamCountry(country: string): SteamAccountInfo {
 }
 
 /** Persist account metadata; country fills only when not already known. */
-function saveAccountMeta(steamId: string, personaName?: string | null, country?: string | null): void {
+function saveAccountMeta(
+  steamId: string,
+  personaName?: string | null,
+  country?: string | null,
+  avatarUrl?: string | null
+): void {
   const current = getSteamAccount();
   let detected: string | undefined;
   try {
@@ -97,8 +104,54 @@ function saveAccountMeta(steamId: string, personaName?: string | null, country?:
   updateSteamAccount({
     steamId,
     personaName: personaName?.trim() ? personaName : current.personaName,
+    avatarUrl: avatarUrl?.trim() ? avatarUrl : current.avatarUrl,
     country: current.country ?? detected ?? null,
   });
+}
+
+export interface SteamProfileMeta {
+  persona?: string;
+  country?: string;
+  avatarUrl?: string;
+}
+
+/**
+ * Persona name, avatar and store country — best effort. GetPlayerSummaries
+ * only accepts an API key (a web-session token gets HTTP 400), so signed-in
+ * users fall back to the public community profile XML, which carries the
+ * persona and avatar for any account (no country there, which is fine: the
+ * region is auto-detected once and user-editable).
+ */
+export async function fetchProfileMeta(auth: string, steamId: string): Promise<SteamProfileMeta> {
+  const meta: SteamProfileMeta = {};
+  if (auth.startsWith('key=')) {
+    try {
+      const json = await getJson(
+        `${API}/ISteamUser/GetPlayerSummaries/v2/?${auth}&steamids=${encodeURIComponent(steamId)}`
+      );
+      const p = json?.response?.players?.[0];
+      if (typeof p?.personaname === 'string') meta.persona = p.personaname;
+      if (typeof p?.loccountrycode === 'string') meta.country = p.loccountrycode;
+      if (typeof p?.avatarmedium === 'string') meta.avatarUrl = p.avatarmedium;
+    } catch {
+      /* fall through to the community profile */
+    }
+  }
+  if (!meta.persona) {
+    try {
+      const res = await httpFetch(`https://steamcommunity.com/profiles/${encodeURIComponent(steamId)}/?xml=1`, {
+        headers: { 'User-Agent': BROWSER_UA },
+      });
+      const xml = await res.text();
+      const tag = (name: string): string | undefined =>
+        xml.match(new RegExp(`<${name}><!\\[CDATA\\[([^\\]]*)\\]\\]></${name}>`))?.[1]?.trim() || undefined;
+      meta.persona = tag('steamID') ?? meta.persona;
+      meta.avatarUrl = tag('avatarMedium') ?? meta.avatarUrl;
+    } catch {
+      /* profile card keeps what it had */
+    }
+  }
+  return meta;
 }
 
 // ---------- credentials (Advanced fallback) ----------
@@ -110,6 +163,7 @@ export async function saveSteamCredentials(apiKey: string, steamId: string): Pro
 
   let persona: string | undefined;
   let country: string | undefined;
+  let avatarUrl: string | undefined;
   try {
     const json = await getJson(
       `${API}/ISteamUser/GetPlayerSummaries/v2/` +
@@ -118,12 +172,13 @@ export async function saveSteamCredentials(apiKey: string, steamId: string): Pro
     const p = json?.response?.players?.[0];
     persona = p?.personaname;
     country = p?.loccountrycode;
+    avatarUrl = typeof p?.avatarmedium === 'string' ? p.avatarmedium : undefined;
   } catch {
     throw new Error('Failed to validate the Steam key. Check the API key and SteamId.');
   }
 
   setSteamApiKey(key);
-  saveAccountMeta(id, persona, country);
+  saveAccountMeta(id, persona, country, avatarUrl);
   return steamAccount();
 }
 
@@ -137,6 +192,7 @@ interface OwnedGame {
   rtimeLastPlayed?: number;
   playtime2Weeks?: number;
   playtimeDeck?: number;
+  iconHash?: string;
 }
 
 /** Maps a raw GetOwnedGames row (either auth path) to the fields we keep. */
@@ -148,6 +204,7 @@ export function ownedGameFromApi(g: any): OwnedGame {
     rtimeLastPlayed: g.rtime_last_played ?? 0,
     playtime2Weeks: g.playtime_2weeks ?? 0,
     playtimeDeck: g.playtime_deck_forever ?? 0,
+    iconHash: typeof g.img_icon_url === 'string' && g.img_icon_url ? g.img_icon_url : undefined,
   };
 }
 
@@ -156,10 +213,11 @@ export function storeSteamLibrary(
   steamId: string,
   games: OwnedGame[],
   personaName?: string | null,
-  country?: string | null
+  country?: string | null,
+  avatarUrl?: string | null
 ): number {
   if (!steamId) throw new Error('SteamId is required.');
-  saveAccountMeta(steamId, personaName, country);
+  saveAccountMeta(steamId, personaName, country, avatarUrl);
   const entries: StoredEntry[] = games.map((g) => ({
     source: 'Steam',
     externalId: String(g.appId),
@@ -169,6 +227,7 @@ export function storeSteamLibrary(
     lastPlayedAt: g.rtimeLastPlayed ? new Date(g.rtimeLastPlayed * 1000).toISOString() : null,
     playtime2WeeksMinutes: g.playtime2Weeks ? g.playtime2Weeks : null,
     playtimeDeckMinutes: g.playtimeDeck ? g.playtimeDeck : null,
+    iconHash: g.iconHash ?? null,
   }));
   const count = replaceEntries('Steam', entries);
   // Only a sync that actually stored something counts as fresh — otherwise a
@@ -187,7 +246,10 @@ export async function syncSteamLibrary(): Promise<{ count: number }> {
       '&include_appinfo=true&include_played_free_games=true&format=json'
   );
   const games: OwnedGame[] = ((json?.response?.games ?? []) as any[]).map(ownedGameFromApi);
-  return { count: storeSteamLibrary(steamId, games) };
+  // Refresh the profile card (name, avatar) with every sync — the token path
+  // only learned it at login, and personas change.
+  const meta = await fetchProfileMeta(auth, steamId);
+  return { count: storeSteamLibrary(steamId, games, meta.persona, meta.country, meta.avatarUrl) };
 }
 
 // ---------- recently played ----------

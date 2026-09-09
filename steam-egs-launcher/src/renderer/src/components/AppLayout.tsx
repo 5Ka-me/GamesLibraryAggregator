@@ -1,7 +1,7 @@
 import React from 'react';
 import { Outlet } from 'react-router-dom';
 import { useI18n } from '@app/shared';
-import Sidebar from './Sidebar';
+import TopBar from './TopBar';
 import { useLegendary } from '../legendary/LegendaryProvider';
 
 /**
@@ -45,17 +45,19 @@ const DownloadErrorBanner: React.FC = () => {
   );
 };
 
-// Fixed, non-collapsible left sidebar + scrollable content area.
+// Steam-style shell: the title bar (nav + profile, doubles as the window
+// frame) on top, the page below. The library's split view manages its own
+// scrolling; every other page scrolls inside #app-scroll.
 const AppLayout: React.FC = () => (
-  <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
-    <Sidebar />
-    <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <DownloadErrorBanner />
-      {/* id is used by pages to save/restore their scroll position */}
-      <main id="app-scroll" style={{ flex: 1, minWidth: 0, overflowY: 'auto' }}>
+  <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
+    <TopBar />
+    <DownloadErrorBanner />
+    {/* id is used by pages to save/restore their scroll position */}
+    <main id="app-scroll" style={{ flex: 1, minHeight: 0, minWidth: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ flex: 1, minHeight: 0 }}>
         <Outlet />
-      </main>
-    </div>
+      </div>
+    </main>
   </div>
 );
 

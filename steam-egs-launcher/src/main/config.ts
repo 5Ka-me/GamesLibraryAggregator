@@ -36,8 +36,13 @@ export function getStoreCacheTtlMs(): number {
   return (Number.isFinite(sec) && sec > 0 ? sec : 3600) * 1000;
 }
 
+/**
+ * The local web bridge is opt-in: there is no Settings toggle any more, so a
+ * loopback server nobody asked for shouldn't run. Enable it for the web app
+ * with `"bridgeEnabled": true` in launcher-config.json.
+ */
 export function getBridgeEnabled(): boolean {
-  return read().bridgeEnabled ?? true;
+  return read().bridgeEnabled ?? false;
 }
 
 export function setBridgeEnabled(enabled: boolean): void {

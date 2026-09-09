@@ -1,7 +1,6 @@
 import { getEpicAccount, getSteamAccount } from './localData';
 import { syncSteamLibrary } from './steamSync';
 import { epicSync, epicAccount } from './epicSync';
-import { emit } from './events';
 
 // Silent background library sync, Heroic-style: shortly after startup and
 // then periodically, each connected store is re-synced when its last sync is
@@ -55,7 +54,7 @@ async function runOnce(): Promise<void> {
   } finally {
     running = false;
   }
-  if (changed) emit('library:changed', {});
+  // (the library store itself emits 'library:changed' on every write)
 }
 
 /** Starts the background sync loop (call once after app ready). */

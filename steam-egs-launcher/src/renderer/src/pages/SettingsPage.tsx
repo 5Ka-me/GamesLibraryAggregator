@@ -8,8 +8,9 @@ import {
   EpicPanel,
   type Lang,
 } from '@app/shared';
+import { getLibraryView, LIBRARY_VIEW_KEY, type LibraryView } from './LibraryPage';
 import { useLegendary } from '../legendary/LegendaryProvider';
-import type { BridgeStatus, UpdateState } from '../../../preload';
+import type { UpdateState } from '../../../preload';
 
 const card: React.CSSProperties = {
   border: '1px solid var(--border)',
@@ -39,18 +40,39 @@ const syncBtn: React.CSSProperties = {
 // ---- Appearance: language only (the launcher is dark-only by design) ----
 const AppearancePanel: React.FC = () => {
   const { t, lang, setLang } = useI18n();
+  const [view, setView] = useState<LibraryView>(getLibraryView);
+  const pickView = (v: LibraryView) => {
+    setView(v);
+    try {
+      localStorage.setItem(LIBRARY_VIEW_KEY, v);
+    } catch {
+      /* ignore */
+    }
+  };
   return (
     <div style={card}>
       <h3 style={{ marginTop: 0 }}>{t('settings.appearance')}</h3>
-      <select
-        aria-label={t('lang.label')}
-        value={lang}
-        onChange={(e) => setLang(e.target.value as Lang)}
-        style={{ ...btn, paddingRight: 8 }}
-      >
-        <option value="en">EN</option>
-        <option value="ru">RU</option>
-      </select>
+      <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12, color: 'var(--muted)' }}>
+          {t('lang.label')}
+          <select
+            aria-label={t('lang.label')}
+            value={lang}
+            onChange={(e) => setLang(e.target.value as Lang)}
+            style={{ ...btn, paddingRight: 8 }}
+          >
+            <option value="en">EN</option>
+            <option value="ru">RU</option>
+          </select>
+        </label>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12, color: 'var(--muted)' }}>
+          {t('settings.libraryView')}
+          <select value={view} onChange={(e) => pickView(e.target.value as LibraryView)} style={{ ...btn, paddingRight: 8 }}>
+            <option value="list">{t('settings.viewList')}</option>
+            <option value="grid">{t('settings.viewGrid')}</option>
+          </select>
+        </label>
+      </div>
     </div>
   );
 };
@@ -229,89 +251,6 @@ const UpdatesPanel: React.FC = () => {
   );
 };
 
-// ---- Local web bridge (127.0.0.1 read-only API for the web app) ----
-const BridgePanel: React.FC = () => {
-  const { t } = useI18n();
-  const [status, setStatus] = useState<BridgeStatus | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  // Every call goes through here so a failure shows up instead of silently
-  // leaving the panel blank or the checkbox out of sync with the main process.
-  const apply = useCallback(async (call: () => Promise<BridgeStatus>) => {
-    setError(null);
-    try {
-      setStatus(await call());
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  }, []);
-
-  useEffect(() => {
-    void apply(() => window.launcher.bridgeStatus());
-  }, [apply]);
-
-  return (
-    <div style={card}>
-      <h3 style={{ marginTop: 0 }}>{t('bridge.title')}</h3>
-      <p style={{ margin: '4px 0 10px', color: 'var(--muted)', fontSize: 13 }}>{t('bridge.desc')}</p>
-
-      {error && <p style={{ color: '#ff6b6b' }}>{t('common.error')}: {error}</p>}
-
-      {status && (
-        <>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-            <input
-              type="checkbox"
-              checked={status.enabled}
-              onChange={(e) => {
-                const enabled = e.target.checked;
-                void apply(() => window.launcher.bridgeSetEnabled(enabled));
-              }}
-            />
-            {t('bridge.enabled')}
-            {status.running && (
-              <span style={{ color: 'var(--muted)', fontSize: 12 }}>
-                · {t('bridge.listening', { port: status.port })}
-              </span>
-            )}
-          </label>
-
-          <div style={{ marginTop: 12 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>{t('bridge.paired')}</div>
-            {status.origins.length === 0 && (
-              <p style={{ margin: 0, color: 'var(--muted)', fontSize: 13 }}>{t('bridge.none')}</p>
-            )}
-            {status.origins.map((origin) => (
-              <div
-                key={origin}
-                style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}
-              >
-                <code
-                  style={{
-                    flex: 1,
-                    minWidth: 200,
-                    background: 'var(--panel-2)',
-                    padding: '4px 8px',
-                    borderRadius: 6,
-                  }}
-                >
-                  {origin}
-                </code>
-                <button
-                  style={btn}
-                  onClick={() => void apply(() => window.launcher.bridgeRevoke(origin))}
-                >
-                  {t('bridge.revoke')}
-                </button>
-              </div>
-            ))}
-          </div>
-        </>
-      )}
-    </div>
-  );
-};
-
 const SettingsPage: React.FC = () => {
   const { t } = useI18n();
   const { available } = useLegendary();
@@ -448,7 +387,6 @@ const SettingsPage: React.FC = () => {
       <AppearancePanel />
       <RegionsPanel steam={steam} epic={epic} onChanged={loadAccounts} />
       <InstallPathPanel />
-      <BridgePanel />
       <UpdatesPanel />
 
       <div style={card}>

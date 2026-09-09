@@ -1,5 +1,5 @@
 import { app, BrowserWindow, session, type Session } from 'electron';
-import { ownedGameFromApi, storeSteamLibrary } from './steamSync';
+import { fetchProfileMeta, ownedGameFromApi, storeSteamLibrary } from './steamSync';
 import { clearStore } from './localData';
 import { clearSteamApiKey } from './secretStore';
 import { httpJson } from './http';
@@ -38,6 +38,7 @@ interface SteamProfile {
   steamId: string;
   personaName?: string;
   country?: string;
+  avatarUrl?: string;
 }
 
 // The Web API token is tied to one signed-in session — cache it per partition
@@ -301,21 +302,8 @@ export async function getWebApiToken(): Promise<string | null> {
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 async function fetchProfile(steamId: string, token: string): Promise<SteamProfile> {
-  const profile: SteamProfile = { steamId };
-  try {
-    const json = await httpJson<any>(
-      `${STEAM_WEB_API}/ISteamUser/GetPlayerSummaries/v2/` +
-        `?access_token=${encodeURIComponent(token)}&steamids=${encodeURIComponent(steamId)}`
-    );
-    const p = json?.response?.players?.[0];
-    if (p) {
-      profile.personaName = p.personaname;
-      if (typeof p.loccountrycode === 'string') profile.country = p.loccountrycode;
-    }
-  } catch {
-    /* persona is optional */
-  }
-  return profile;
+  const meta = await fetchProfileMeta(`access_token=${encodeURIComponent(token)}`, steamId);
+  return { steamId, personaName: meta.persona, country: meta.country, avatarUrl: meta.avatarUrl };
 }
 
 async function fetchOwnedGames(steamId: string, token: string): Promise<any[]> {
@@ -354,7 +342,7 @@ export async function steamLogin(remember: boolean): Promise<SteamLoginResult> {
     fetchOwnedGames(steamId, token),
   ]);
 
-  storeSteamLibrary(steamId, games.map(ownedGameFromApi), profile.personaName, profile.country);
+  storeSteamLibrary(steamId, games.map(ownedGameFromApi), profile.personaName, profile.country, profile.avatarUrl);
 
   return {
     success: true,

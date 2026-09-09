@@ -550,17 +550,49 @@ const AchievementsBlock: React.FC<{ appid: number }> = ({ appid }) => {
 
 type PlatformTab = 'Steam' | 'Epic';
 
+/** Full-page route: /store/app/:appid (store) or /game with the Game in route state. */
 const GameDetailsPage: React.FC = () => {
   const params = useParams();
   const location = useLocation() as { state?: { game?: Game } };
+  return <GameView appid={params.appid ? parseInt(params.appid, 10) : null} game={location.state?.game ?? null} />;
+};
+
+/** Steam library logo of a game; falls back to the plain title when there is none. */
+const HeroLogo: React.FC<{ appid: number | null; title: string | null }> = ({ appid, title }) => {
+  const [broken, setBroken] = useState(false);
+  useEffect(() => setBroken(false), [appid]);
+  if (appid != null && !broken) {
+    return (
+      <img
+        src={`https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/logo.png`}
+        alt={title ?? ''}
+        onError={() => setBroken(true)}
+        style={{ maxWidth: 320, maxHeight: 150, filter: 'drop-shadow(0 6px 24px rgba(0,0,0,0.6))', display: 'block' }}
+      />
+    );
+  }
+  return (
+    <h1 style={{ margin: 0, fontSize: 38, fontWeight: 800, letterSpacing: 0.4, color: '#ffffff', textShadow: '0 3px 14px rgba(0,0,0,0.6)', lineHeight: 1.1 }}>
+      {title ?? '…'}
+    </h1>
+  );
+};
+
+/**
+ * The game page itself. `embedded` = rendered in the library's right pane:
+ * no back button, no blurred hero of its own (the library puts the key art
+ * behind the whole area), a logo instead of the capsule.
+ */
+export const GameView: React.FC<{ appid: number | null; game: Game | null; embedded?: boolean }> = ({
+  appid: paramAppid,
+  game: stateGame,
+  embedded = false,
+}) => {
   const navigate = useNavigate();
   const { t, lang } = useI18n();
 
-  const stateGame = location.state?.game ?? null;
-
   // Steam appid: from the URL (store visits) or the library game's entry; for
   // games known only from EGS it is resolved by a title search below.
-  const paramAppid = params.appid ? parseInt(params.appid, 10) : null;
   const stateSteamId = stateGame
     ? stateGame.entries.map(steamAppId).find((x): x is string => !!x) ?? null
     : null;
@@ -713,10 +745,10 @@ const GameDetailsPage: React.FC = () => {
   const heroTags = (details?.tags.length ? details.tags : epic?.genres ?? []).slice(0, 5);
 
   return (
-    <div style={{ maxWidth: 1000, margin: '0 auto', padding: '0 20px 24px' }}>
+    <div style={embedded ? { padding: '0 28px 24px' } : { maxWidth: 1000, margin: '0 auto', padding: '0 20px 24px' }}>
       {/* ===== Hero: blurred key art + sharp capsule + title (Steam app-hub style) ===== */}
-      <div style={{ position: 'relative', margin: '0 -20px 18px', overflow: 'hidden', minHeight: 240 }}>
-        {heroArt && (
+      <div className={embedded ? 'rise' : undefined} style={{ position: 'relative', margin: embedded ? '0 -28px 18px' : '0 -20px 18px', overflow: 'hidden', minHeight: embedded ? 300 : 240 }}>
+        {heroArt && !embedded && (
           <img
             src={heroArt}
             alt=""
@@ -730,20 +762,24 @@ const GameDetailsPage: React.FC = () => {
             }}
           />
         )}
-        <div
-          style={{
-            position: 'absolute',
-            inset: 0,
-            background:
-              'linear-gradient(180deg, rgba(22,29,41,0.25) 0%, rgba(22,29,41,0.6) 55%, var(--bg) 100%)',
-          }}
-        />
-        <button
-          style={{ ...ctl, position: 'absolute', top: 14, left: 20, zIndex: 2 }}
-          onClick={() => navigate(-1)}
-        >
-          ←
-        </button>
+        {!embedded && (
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              background:
+                'linear-gradient(180deg, rgba(22,29,41,0.25) 0%, rgba(22,29,41,0.6) 55%, var(--bg) 100%)',
+            }}
+          />
+        )}
+        {!embedded && (
+          <button
+            style={{ ...ctl, position: 'absolute', top: 14, left: 20, zIndex: 2 }}
+            onClick={() => navigate(-1)}
+          >
+            ←
+          </button>
+        )}
         <div style={{ position: 'absolute', top: 14, right: 20, zIndex: 2, display: 'flex', gap: 8 }}>
           {appid != null && (
             <button
@@ -768,11 +804,11 @@ const GameDetailsPage: React.FC = () => {
             display: 'flex',
             alignItems: 'flex-end',
             gap: 24,
-            padding: '64px 28px 18px',
+            padding: embedded ? '150px 36px 18px' : '64px 28px 18px',
             flexWrap: 'wrap',
           }}
         >
-          {heroArt && (
+          {heroArt && !embedded && (
             <img
               src={heroArt}
               alt={title ?? ''}
@@ -818,19 +854,23 @@ const GameDetailsPage: React.FC = () => {
                 </span>
               )}
             </div>
-            <h1
-              style={{
-                margin: 0,
-                fontSize: 38,
-                fontWeight: 800,
-                letterSpacing: 0.4,
-                color: '#ffffff',
-                textShadow: '0 3px 14px rgba(0,0,0,0.6)',
-                lineHeight: 1.1,
-              }}
-            >
-              {title ?? '…'}
-            </h1>
+            {embedded ? (
+              <HeroLogo appid={appid} title={title} />
+            ) : (
+              <h1
+                style={{
+                  margin: 0,
+                  fontSize: 38,
+                  fontWeight: 800,
+                  letterSpacing: 0.4,
+                  color: '#ffffff',
+                  textShadow: '0 3px 14px rgba(0,0,0,0.6)',
+                  lineHeight: 1.1,
+                }}
+              >
+                {title ?? '…'}
+              </h1>
+            )}
             {heroTags.length > 0 && (
               <div style={{ display: 'flex', gap: 7, marginTop: 10, flexWrap: 'wrap' }}>
                 {heroTags.map((tag) => (

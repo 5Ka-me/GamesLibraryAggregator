@@ -16,6 +16,8 @@ export interface GameEntryDto {
   lastPlayedAt: string | null;
   playtime2WeeksMinutes: number | null;
   playtimeDeckMinutes: number | null;
+  /** Small square icon for list rows (Steam client icon); null until known. */
+  smallIconUrl: string | null;
   launchUrl: string | null;
   installUrl: string | null;
 }
@@ -51,6 +53,10 @@ function toDto(e: StoredEntry): GameEntryDto {
     lastPlayedAt: e.lastPlayedAt ?? null,
     playtime2WeeksMinutes: e.playtime2WeeksMinutes ?? null,
     playtimeDeckMinutes: e.playtimeDeckMinutes ?? null,
+    smallIconUrl:
+      steam && e.iconHash
+        ? `https://media.steampowered.com/steamcommunity/public/images/apps/${encodeURIComponent(e.externalId)}/${encodeURIComponent(e.iconHash)}.jpg`
+        : null,
     launchUrl: steam
       ? `steam://rungameid/${encodeURIComponent(e.externalId)}`
       : epicLink?.('launch') ?? null,

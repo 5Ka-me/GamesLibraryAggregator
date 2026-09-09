@@ -154,7 +154,7 @@ Nothing secret is committed. Local secrets live in git-ignored files
 | `LAUNCHER_BRIDGE_PORT` | launcher env | Local web-bridge port (default 17832, loopback only) |
 | `REACT_APP_BRIDGE_PORT` | web build arg | Bridge port the web app probes (must match the launcher's) |
 
-Per-user launcher settings (store regions, EGS install folder, web bridge) are managed on the
+Per-user launcher settings (store regions, EGS install folder) are managed on the
 launcher's Settings page.
 
 ## API endpoints (web backend)

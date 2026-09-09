@@ -395,3 +395,231 @@ button:disabled {
 .rnd-chip button:hover {
   color: var(--text);
 }
+
+/* ===== Steam-style chrome: title bar + library split view ===== */
+.titlebar {
+  -webkit-app-region: drag;
+  user-select: none;
+}
+.titlebar button,
+.titlebar a,
+.titlebar input,
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+.topnav {
+  display: flex;
+  align-items: center;
+  height: 40px;
+  padding: 0 4px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: #94a6bd;
+  text-decoration: none;
+  position: relative;
+  transition: color 0.15s ease;
+}
+.topnav:hover {
+  color: var(--text);
+}
+.topnav.active {
+  color: var(--text);
+}
+.topnav.active::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  bottom: 0;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--accent);
+}
+.profile-btn {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 10px;
+  height: 32px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.profile-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.update-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px 4px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(87, 184, 240, 0.35);
+  background: rgba(87, 184, 240, 0.12);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.update-chip:hover {
+  background: rgba(87, 184, 240, 0.22);
+}
+
+/* Library list (left pane) */
+.lib-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 30px;
+  padding: 0 10px 0 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+  position: relative;
+  border: none;
+  background: transparent;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.lib-row:hover {
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--text);
+}
+.lib-row.inst {
+  color: var(--text);
+}
+.lib-row.sel {
+  background: linear-gradient(90deg, #22324a 0%, #1d2a3e 100%);
+  color: var(--accent-bright);
+  font-weight: 600;
+}
+.lib-row.sel::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.lib-row .ico {
+  width: 20px;
+  height: 20px;
+  border-radius: 3px;
+  object-fit: cover;
+  flex: 0 0 auto;
+  background: var(--panel-2);
+}
+.lib-row .ttl {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lib-section {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px 6px 10px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  width: 100%;
+  font-family: inherit;
+}
+.lib-section svg {
+  transition: transform 0.15s ease;
+}
+.lib-section.closed svg {
+  transform: rotate(-90deg);
+}
+
+/* Game art behind the whole library area — two layers crossfade */
+.backdrop-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 20%;
+  opacity: 0;
+  filter: saturate(1.1);
+  animation: backdrop-in 0.45s ease forwards;
+}
+@keyframes backdrop-in {
+  to {
+    opacity: 0.9;
+  }
+}
+
+/* Cascading reveal for page blocks */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.rise {
+  animation: rise 0.35s ease both;
+}
+.rise-2 {
+  animation-delay: 0.06s;
+}
+.rise-3 {
+  animation-delay: 0.12s;
+}
+
+/* Home pane: installed mini capsules */
+.mini-cap {
+  width: 196px;
+  height: 112px;
+  border-radius: 8px;
+  overflow: hidden;
+  position: relative;
+  flex: 0 0 auto;
+  cursor: pointer;
+  background: var(--panel-2);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.mini-cap:hover {
+  transform: scale(1.04);
+  box-shadow: 0 0 0 2px var(--accent), 0 10px 30px rgba(87, 184, 240, 0.3);
+  z-index: 1;
+}
+.mini-cap img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.mini-cap .cap {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 18px 10px 8px 10px;
+  background: linear-gradient(180deg, rgba(11, 18, 28, 0) 0%, rgba(11, 18, 28, 0.92) 70%);
+  font-size: 12.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.shelf-card:hover {
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(87, 184, 240, 0.5);
+}

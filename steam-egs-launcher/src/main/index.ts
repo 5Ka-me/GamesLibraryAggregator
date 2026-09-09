@@ -30,11 +30,18 @@ function applyCsp(): void {
   });
 }
 
+// Same id electron-builder stamps on the Start-menu/desktop shortcuts, so the
+// taskbar groups the window with its shortcut and shows the shortcut's icon
+// (without it Windows falls back to per-exe identity and can show a blank icon).
+app.setAppUserModelId('com.5ka.steamegslauncher');
+
 function createWindow(): void {
   // Window/taskbar icon. The packaged exe carries it as a resource; in dev the
   // .ico is read from the repo (absent from the packaged layout — hence the
   // existence check instead of a hardcoded branch).
-  const iconPath = join(app.getAppPath(), 'resources', 'icon.ico');
+  const iconPath = app.isPackaged
+    ? join(process.resourcesPath, 'icon.ico')
+    : join(app.getAppPath(), 'resources', 'icon.ico');
 
   const win = new BrowserWindow({
     width: 1200,
@@ -43,7 +50,12 @@ function createWindow(): void {
     minHeight: 600,
     show: false,
     autoHideMenuBar: true,
-    backgroundColor: '#121212',
+    backgroundColor: '#161d29',
+    // Steam-style chrome: the renderer draws the title bar (nav + profile) as a
+    // drag region; Windows keeps drawing the min/max/close buttons on top of it
+    // in the app's colours, so Snap Layouts and accessibility keep working.
+    titleBarStyle: 'hidden',
+    titleBarOverlay: { color: '#131922', symbolColor: '#94a6bd', height: 40 },
     ...(existsSync(iconPath) ? { icon: iconPath } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),

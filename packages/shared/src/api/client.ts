@@ -20,6 +20,8 @@ export interface GameEntry {
   playtime2WeeksMinutes?: number | null;
   /** Steam only: lifetime minutes on Steam Deck. */
   playtimeDeckMinutes?: number | null;
+  /** Small square icon for list rows (Steam client icon); absent until synced. */
+  smallIconUrl?: string | null;
   launchUrl?: string | null;
   installUrl?: string | null;
 }
@@ -44,6 +46,8 @@ export interface SteamAccount {
   configured: boolean;
   steamId?: string | null;
   personaName?: string | null;
+  /** Steam avatar URL (medium) when known. */
+  avatarUrl?: string | null;
   /** Store region (ISO alpha-2) used for prices; null → US fallback. */
   country?: string | null;
 }

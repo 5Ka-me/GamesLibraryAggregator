@@ -59,6 +59,12 @@ See the [root README](../README.md) for features, quick start and configuration.
   - `services/steamLauncher.ts` — `steam://` deep links; store pages open in the Steam client when installed.
 - **preload/** — a small typed `window.launcher` bridge (contextIsolation on).
 - **renderer/** — React UI: library, store (home/sections/wishlist/search), random-game reel, statistics (Replay-style overview + the whole library as Steam's profile games list, batched), unified game page
+  (`GameView`, also embedded in the library's split view). The shell is Steam-like: the title bar is
+  drawn by the renderer (`TopBar` — section nav, update chip, profile → Settings) as a drag region with
+  Windows' own min/max/close buttons overlaid in app colours (`titleBarStyle: 'hidden'` +
+  `titleBarOverlay`). The library defaults to a split view — game list with icons on the left, Home
+  pane or the selected game's page on the right, its key art behind the whole area; Settings can
+  switch it back to the cover grid
   (platform tabs, launch & install, price comparison, achievements, screenshot lightbox),
   statistics, settings.
 
@@ -83,7 +89,7 @@ Env knobs:
 |---|---|---|
 | `LAUNCHER_STORE_CACHE_TTL` | `3600` | TTL (seconds) of the "dynamic" cache class — anything with prices (front page, sections, wishlist metadata, search, details). Stale data is served instantly and refreshed in the background; ↻ always fetches live. |
 | `LAUNCHER_AUTOSYNC_HOURS` | `6` | Background library re-sync interval (both stores). `0` disables autosync. |
-| `LAUNCHER_BRIDGE_PORT` | `17832` | Port of the local web bridge (loopback only; toggle in Settings). The web app reads the same port from `REACT_APP_BRIDGE_PORT`. |
+| `LAUNCHER_BRIDGE_PORT` | `17832` | Port of the local web bridge (loopback only). The bridge is **off by default**; enable it with `"bridgeEnabled": true` in `%APPDATA%/steam-egs-launcher/launcher-config.json`. The web app reads the same port from `REACT_APP_BRIDGE_PORT`. |
 
 ## Build / package / release (Windows)
 

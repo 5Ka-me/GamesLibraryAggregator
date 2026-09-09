@@ -2,6 +2,7 @@ import { app } from 'electron';
 import { join } from 'path';
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import { recordPlaytimeSnapshot } from './playtimeHistory';
+import { emit } from './events';
 
 // Local library database — the launcher's replacement for the cloud Postgres.
 // One JSON file in userData holding the per-store library entries and account
@@ -35,11 +36,15 @@ export interface StoredEntry {
   playtime2WeeksMinutes?: number | null;
   /** Steam: minutes on Steam Deck (lifetime). */
   playtimeDeckMinutes?: number | null;
+  /** Steam: img_icon_url hash of the 32px client icon (list rows). */
+  iconHash?: string | null;
 }
 
 export interface SteamAccountData {
   steamId?: string | null;
   personaName?: string | null;
+  /** Steam avatar (medium, 64px) for the profile card. */
+  avatarUrl?: string | null;
   /**
    * Store region (ISO alpha-2) for prices; null → US fallback. Auto-detection
    * only ever fills an empty value, so a region set in Settings sticks.
@@ -166,6 +171,9 @@ export function replaceEntries(source: EntrySource, fresh: StoredEntry[]): numbe
   data.entries = [...data.entries.filter((e) => e.source !== source), ...merged];
   save();
   recordPlaytimeSnapshot(data.entries);
+  // Every consumer of the library (pages, the title-bar profile card) refreshes
+  // on this — whether the sync was manual, a sign-in, or the autosync.
+  emit('library:changed', {});
   return merged.length;
 }
 
@@ -189,4 +197,5 @@ export function clearStore(source: EntrySource): void {
   if (source === 'Steam') data.steam = {};
   else data.epic = {};
   save();
+  emit('library:changed', {});
 }

@@ -57,6 +57,26 @@ export const DiceIcon: React.FC<IconProps> = ({ size = 20 }) => (
   </svg>
 );
 
+export const HomeIcon: React.FC<IconProps> = ({ size = 16 }) => (
+  <svg {...base(size)}>
+    <path d="M3 11l9-8 9 8" />
+    <path d="M5 10v10h14V10" />
+  </svg>
+);
+
+export const ChevronDownIcon: React.FC<IconProps> = ({ size = 12 }) => (
+  <svg {...base(size)} strokeWidth={2.4}>
+    <path d="M6 9l6 6 6-6" />
+  </svg>
+);
+
+export const SearchIcon: React.FC<IconProps> = ({ size = 14 }) => (
+  <svg {...base(size)} strokeWidth={2}>
+    <circle cx="11" cy="11" r="7" />
+    <path d="M20 20l-3.5-3.5" />
+  </svg>
+);
+
 export const PowerIcon: React.FC<IconProps> = ({ size = 20 }) => (
   <svg {...base(size)}>
     <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
