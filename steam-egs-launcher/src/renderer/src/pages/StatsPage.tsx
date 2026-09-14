@@ -14,6 +14,7 @@ import {
   type SteamAchievementProgress,
   type PlaytimeHistory,
 } from '@app/shared';
+import { profileFor, useProfiles } from '../hooks/useProfiles';
 
 // Statistics — two tabs.
 //   Overview: a Steam-Replay-like dashboard computed locally from data the
@@ -278,6 +279,7 @@ const StatsPage: React.FC = () => {
   const [recent, setRecent] = useState<SteamRecentGame[] | null>(cachedRecent);
   const [history, setHistory] = useState<PlaytimeHistory | null>(cachedHistory);
   const [error, setError] = useState<string | null>(null);
+  const profiles = useProfiles();
 
   const load = useCallback(() => {
     api
@@ -406,6 +408,19 @@ const StatsPage: React.FC = () => {
     });
     return { total, minutes, played, backlog, buckets, bySrc, withAch: withAch.length, achUnlocked, achTotal, avgPct, perfect, almost, months, forgotten, deck, steamMinutes, egsByYear, completion };
   }, [scoped, rows, sel, lang]);
+
+  // ----- hours by genre (local AI profiles; no store requests) -----
+  const genreHours = useMemo(() => {
+    const byGenre = new Map<string, number>();
+    let covered = 0;
+    for (const r of scoped) {
+      const p = profileFor(profiles, r.game);
+      if (!p || !p.known || r.minutes === 0) continue;
+      covered++;
+      for (const g of p.genres.slice(0, 3)) byGenre.set(g, (byGenre.get(g) ?? 0) + r.minutes);
+    }
+    return { rows: [...byGenre.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8), covered, played: scoped.filter((r) => r.minutes > 0).length };
+  }, [scoped, profiles]);
 
   // ----- history deltas -----
   const hist = useMemo(() => {
@@ -620,6 +635,15 @@ const StatsPage: React.FC = () => {
                 ))
               )}
             </Card>
+
+            {/* ===== Hours by genre (AI profiles) ===== */}
+            {genreHours.rows.length > 0 && (
+              <Card title={t('stats.genres')} note={t('stats.genresNote', { n: genreHours.covered, total: genreHours.played })}>
+                {genreHours.rows.map(([g, m]) => (
+                  <BarRow key={g} label={t(`tag.genre.${g}`)} value={m} max={genreHours.rows[0][1]} valueLabel={`${hours(m)} ${H}`} />
+                ))}
+              </Card>
+            )}
 
             {/* ===== EGS games by year added ===== */}
             {ov.egsByYear.length > 0 && (

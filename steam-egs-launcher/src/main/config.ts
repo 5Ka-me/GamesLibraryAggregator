@@ -8,8 +8,12 @@ const configFile = (): string => join(app.getPath('userData'), 'launcher-config.
 interface LauncherConfig {
   /** Base folder where legendary installs EGS games (empty = legendary default). */
   installBasePath?: string;
-  /** Local web bridge (127.0.0.1 read-only API); on by default. */
+  /** Local web bridge (127.0.0.1 read-only API); off unless enabled here. */
   bridgeEnabled?: boolean;
+  /** chutes.ai model id for the AI search (see services/ai.ts for the default). */
+  aiModel?: string;
+  /** Cumulative AI usage, shown in Settings so the cost is never a surprise. */
+  aiUsage?: { requests: number; promptTokens: number; completionTokens: number };
 }
 
 function read(): LauncherConfig {
@@ -58,5 +62,32 @@ export function getInstallBasePath(): string {
 export function setInstallBasePath(path: string): void {
   const cfg = read();
   cfg.installBasePath = path.trim();
+  write(cfg);
+}
+
+// ---------- AI search ----------
+
+export function getAiModel(): string | null {
+  const m = read().aiModel;
+  return typeof m === 'string' && m.trim() ? m.trim() : null;
+}
+
+export function setAiModel(model: string): void {
+  const cfg = read();
+  const m = model.trim();
+  if (m) cfg.aiModel = m;
+  else delete cfg.aiModel;
+  write(cfg);
+}
+
+export function getAiUsage(): { requests: number; promptTokens: number; completionTokens: number } {
+  const u = read().aiUsage;
+  return { requests: u?.requests ?? 0, promptTokens: u?.promptTokens ?? 0, completionTokens: u?.completionTokens ?? 0 };
+}
+
+export function addAiUsage(promptTokens: number, completionTokens: number): void {
+  const cfg = read();
+  const u = getAiUsage();
+  cfg.aiUsage = { requests: u.requests + 1, promptTokens: u.promptTokens + promptTokens, completionTokens: u.completionTokens + completionTokens };
   write(cfg);
 }

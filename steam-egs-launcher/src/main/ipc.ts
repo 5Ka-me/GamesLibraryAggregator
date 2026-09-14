@@ -16,6 +16,11 @@ import {
 } from './services/steamPersonal';
 import { scanInstalledSteamAppIds } from './services/steamScan';
 import { appVersion, checkForUpdates, installUpdate, updateState } from './services/updater';
+import { aiListModels, aiStatus } from './services/aiClient';
+import { assistantChat, gameVerdict, type ChatTurn } from './services/assistant';
+import { cancelEnrichment, clearProfiles, enrichStatus, getProfiles, startEnrichment } from './services/enrichment';
+import { clearChutesApiKey, setChutesApiKey } from './services/secretStore';
+import { setAiModel } from './config';
 import { isWebUrl, requireAppId, requireEpicAppName } from './services/validate';
 import {
   storeHome,
@@ -52,6 +57,44 @@ export function registerIpc(): void {
 
   // Auto-update (GitHub Releases; no-ops in dev).
   ipcMain.handle('app:version', () => appVersion());
+
+  // ----- AI search (chutes.ai) -----
+  ipcMain.handle('ai:status', () => aiStatus());
+  ipcMain.handle('ai:setKey', (_e, key: unknown) => {
+    if (typeof key !== 'string' || !/^\S{8,300}$/.test(key.trim())) throw new Error('Invalid API key.');
+    setChutesApiKey(key);
+    return aiStatus();
+  });
+  ipcMain.handle('ai:clearKey', () => {
+    clearChutesApiKey();
+    return aiStatus();
+  });
+  ipcMain.handle('ai:setModel', (_e, model: unknown) => {
+    if (typeof model !== 'string' || !/^[\w./:@+-]{0,160}$/.test(model.trim())) throw new Error('Invalid model id.');
+    setAiModel(model);
+    return aiStatus();
+  });
+  ipcMain.handle('ai:models', () => aiListModels());
+
+  // ----- library enrichment (AI game profiles) -----
+  ipcMain.handle('enrich:status', (_e, lang: unknown) => enrichStatus(lang === 'ru' ? 'ru' : 'en'));
+  ipcMain.handle('enrich:get', () => getProfiles());
+  ipcMain.handle('enrich:start', (_e, lang: unknown, redo: unknown) => startEnrichment(lang === 'ru' ? 'ru' : 'en', redo === true));
+  ipcMain.handle('enrich:cancel', () => cancelEnrichment());
+  ipcMain.handle('enrich:clear', (_e, lang: unknown) => {
+    clearProfiles();
+    return enrichStatus(lang === 'ru' ? 'ru' : 'en');
+  });
+  ipcMain.handle('ai:chat', (_e, history: unknown, lang: unknown) => {
+    if (!Array.isArray(history) || history.length === 0 || history.length > 60) throw new Error('Invalid chat history');
+    const turns: ChatTurn[] = history.map((t: unknown) => {
+      const x = t as { role?: unknown; content?: unknown };
+      if ((x.role !== 'user' && x.role !== 'assistant') || typeof x.content !== 'string' || x.content.length > 4000) throw new Error('Invalid chat turn');
+      return { role: x.role, content: x.content };
+    });
+    return assistantChat(turns, lang === 'ru' ? 'ru' : 'en');
+  });
+  ipcMain.handle('ai:verdict', (_e, appid: unknown, lang: unknown, force: unknown) => gameVerdict(requireAppId(appid), lang === 'ru' ? 'ru' : 'en', force === true));
   ipcMain.handle('update:state', () => updateState());
   ipcMain.handle('update:check', () => checkForUpdates());
   ipcMain.handle('update:install', () => installUpdate());

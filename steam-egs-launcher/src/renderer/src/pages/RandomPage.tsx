@@ -12,6 +12,7 @@ import {
   type Game,
 } from '@app/shared';
 import { ctl } from '../store/parts';
+import { TAG_CHIPS, chipMatches, profileFor, useProfiles, type TagChip } from '../hooks/useProfiles';
 
 // "What to play?" — a slot-machine reel that picks a random library game.
 //
@@ -41,6 +42,11 @@ const SPIN_EASING = 'cubic-bezier(0.12, 0.82, 0.25, 1.06)';
 
 let cachedGames: Game[] | null = null;
 let sessionExcluded: string[] = [];
+/** The AI chat's "exclude from the reel" action — same session-only list the page uses. */
+export function excludeFromReel(title: string): void {
+  if (!sessionExcluded.includes(title)) sessionExcluded = [...sessionExcluded, title];
+}
+export const isExcludedFromReel = (title: string): boolean => sessionExcluded.includes(title);
 /**
  * The reel as last seen: coming back to the page shows the very same faces
  * and result instantly (their art is already in the HTTP cache) instead of
@@ -316,10 +322,18 @@ const RandomPage: React.FC = () => {
     }
   }, [installedOnly]);
 
+  const [chips, setChips] = useState<TagChip[]>([]);
+  const profiles = useProfiles();
+  const hasProfiles = Object.keys(profiles).length > 0;
   const pool = useMemo(() => {
     const out = new Set(excluded);
-    return games.filter((g) => !out.has(g.title) && (!installedOnly || !actions || isInstalled(g, actions)));
-  }, [games, excluded, installedOnly, actions]);
+    return games.filter(
+      (g) =>
+        !out.has(g.title) &&
+        (!installedOnly || !actions || isInstalled(g, actions)) &&
+        (chips.length === 0 || chips.every((c) => chipMatches(c, profileFor(profiles, g))))
+    );
+  }, [games, excluded, installedOnly, actions, chips, profiles]);
 
   // Dress the idle reel as soon as the library arrives so it never shows blank faces.
   useEffect(() => {
@@ -401,6 +415,15 @@ const RandomPage: React.FC = () => {
         <span style={{ fontSize: 13, color: 'var(--muted)' }}>
           {t('rnd.pool', { n: pool.length, total: games.length })}
         </span>
+        {hasProfiles && (
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }} title={t('tag.aiEstimate')}>
+            {TAG_CHIPS.map((c) => (
+              <button key={c} className={`pill${chips.includes(c) ? ' pill-active' : ''}`} style={{ padding: '4px 9px', fontSize: 12 }} onClick={() => setChips((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]))}>
+                {t(`tag.chip.${c}`)}
+              </button>
+            ))}
+          </div>
+        )}
         <div style={{ flex: 1 }} />
         {excluded.length > 0 && (
           <button style={ctl} onClick={() => setExcluded([])}>

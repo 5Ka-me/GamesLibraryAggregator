@@ -9,6 +9,7 @@ import SectionPage from './pages/SectionPage';
 import GameDetailsPage from './pages/GameDetailsPage';
 import StatsPage from './pages/StatsPage';
 import RandomPage from './pages/RandomPage';
+import AiPage from './pages/AiPage';
 import SettingsPage from './pages/SettingsPage';
 
 // Registers router-dependent platform hooks: library cards navigate to the
@@ -40,6 +41,8 @@ const App: React.FC = () => (
               <Route path="/store/section/:id" element={<SectionPage />} />
               <Route path="/store/app/:appid" element={<GameDetailsPage />} />
               <Route path="/game" element={<GameDetailsPage />} />
+              <Route path="/ai" element={<AiPage />} />
+              <Route path="/search" element={<AiPage />} />
               <Route path="/random" element={<RandomPage />} />
               <Route path="/stats" element={<StatsPage />} />
               <Route path="/settings" element={<SettingsPage />} />

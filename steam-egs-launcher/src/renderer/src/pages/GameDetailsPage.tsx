@@ -14,9 +14,11 @@ import {
   type GameEntry,
   type SteamGameAchievements,
 } from '@app/shared';
-import type { EpicDetails, GameDetails } from '../../../preload';
+import type { AiStatus, GameVerdict, EpicDetails, GameDetails } from '../../../preload';
 import { ctl, formatCents } from '../store/parts';
 import ScreenshotViewer, { type ViewerShot } from '../components/ScreenshotViewer';
+import { profileFor, profileLine, useProfiles } from '../hooks/useProfiles';
+import { NoKeyNote } from './SettingsPage';
 
 // Unified game page. Reached from the store (/store/app/:appid) or from a
 // library card (/game with the Game in route state; works for Epic-only games).
@@ -437,6 +439,120 @@ const LaunchInstallSection: React.FC<{
   );
 };
 
+// ---------- AI verdict: worth buying / worth playing ----------
+
+const VERDICT_COLOR: Record<GameVerdict['verdict'], string> = {
+  buy: 'var(--success)',
+  wait_for_sale: '#f0a35a',
+  skip: '#ff6b6b',
+  own_similar: '#c9a6ff',
+  already_owned: 'var(--accent)',
+};
+
+/**
+ * One paid model call, by button only: public store facts (reviews all-time
+ * vs last 30 days, players, price, similar owned games) → a verdict with pros
+ * and cons. Facts are shown separately from the opinion.
+ */
+const VerdictBlock: React.FC<{ appid: number; owned: boolean; embedded: boolean }> = ({ appid, owned, embedded }) => {
+  const { t, lang } = useI18n();
+  const [status, setStatus] = useState<AiStatus | null>(null);
+  const [v, setV] = useState<GameVerdict | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    setV(null);
+    setErr(null);
+    window.launcher.aiStatus().then(setStatus).catch(() => setStatus(null));
+  }, [appid]);
+
+  const run = (force = false) => {
+    setBusy(true);
+    setErr(null);
+    window.launcher
+      .aiVerdict(appid, lang, force)
+      .then(setV)
+      .catch((e) => setErr(e instanceof Error ? e.message : String(e)))
+      .finally(() => setBusy(false));
+  };
+
+  const f = v?.facts;
+  const fact = (label: string, value: string | null) =>
+    value ? (
+      <span key={label} style={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 90 }}>
+        <span style={{ fontSize: 10.5, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: 0.6 }}>{label}</span>
+        <span style={{ fontSize: 13.5, fontWeight: 600 }}>{value}</span>
+      </span>
+    ) : null;
+  const errText = err ? (err.includes('AI_NO_KEY') ? t('search.err.noKey') : err.includes('AI_RATE') ? t('search.err.rate') : err.includes('AI_BALANCE') ? t('search.err.balance') : `${t('common.error')}: ${err.replace(/^Error invoking remote method '[^']+': Error: /, '')}`) : null;
+
+  return (
+    <div className={embedded ? 'rise rise-2' : undefined} style={{ ...card }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <span className="uc-header">{t(owned ? 'verdict.titleOwned' : 'verdict.title')}</span>
+        <span style={{ fontSize: 11.5, color: 'var(--muted)', flex: 1 }}>{t('verdict.desc')}</span>
+        {status && !status.configured && <NoKeyNote compact />}
+        {!v && !busy && status?.configured && (
+          <button style={ctl} onClick={() => run()}>{t('verdict.run')}</button>
+        )}
+        {v && !busy && (
+          <button style={{ ...ctl, background: 'transparent', color: 'var(--muted)' }} onClick={() => run(true)}>↻ {t('verdict.refresh')}</button>
+        )}
+      </div>
+      {busy && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, color: 'var(--muted)', marginTop: 12 }}>
+          <span className="ai-dots"><span /><span /><span /></span>
+          {t('verdict.running')}
+        </div>
+      )}
+      {errText && <p style={{ margin: '10px 0 0', color: '#ff9f9f', fontSize: 13 }}>{errText}</p>}
+      {v && f && !busy && (
+        <div className="rise" style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', padding: '10px 12px', borderRadius: 8, background: 'var(--panel-2)' }}>
+            {fact(t('verdict.reviews'), f.positivePct != null ? `${f.positivePct}% · ${(f.reviewTotal ?? 0).toLocaleString()}` : f.reviewScoreDesc)}
+            {fact(t('verdict.recent'), f.recentPositivePct != null ? `${f.recentPositivePct}% · ${(f.recentTotal ?? 0).toLocaleString()}${v.recentTrend ? ` · ${t(`verdict.trend.${v.recentTrend}`)}` : ''}` : null)}
+            {fact(t('verdict.players'), f.currentPlayers != null ? f.currentPlayers.toLocaleString() : null)}
+            {fact(t('verdict.price'), f.price ? `${f.price}${f.discountPct ? ` (−${f.discountPct}%)` : ''}` : null)}
+            {fact('Metacritic', f.metacritic != null ? String(f.metacritic) : null)}
+            {fact(t('verdict.release'), f.releaseDate)}
+          </div>
+          <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, padding: '10px 14px', borderRadius: 10, border: `1px solid ${VERDICT_COLOR[v.verdict]}`, color: VERDICT_COLOR[v.verdict], minWidth: 120 }}>
+              <span style={{ fontSize: 22, fontWeight: 800 }}>{v.score}/10</span>
+              <span style={{ fontSize: 12, fontWeight: 700, textAlign: 'center' }}>{t(`verdict.v.${v.verdict}`)}</span>
+            </div>
+            <div style={{ flex: 1, minWidth: 260 }}>
+              <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.55 }}>{v.summary}</p>
+              {v.forWhom && <p style={{ margin: '8px 0 0', fontSize: 12.5, color: 'var(--muted)' }}>{v.forWhom}</p>}
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
+            {v.pros.length > 0 && (
+              <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, lineHeight: 1.5 }}>
+                {v.pros.map((x) => <li key={x} style={{ color: 'var(--success)' }}><span style={{ color: 'var(--text)' }}>{x}</span></li>)}
+              </ul>
+            )}
+            {v.cons.length > 0 && (
+              <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, lineHeight: 1.5 }}>
+                {v.cons.map((x) => <li key={x} style={{ color: '#ff8a8a' }}><span style={{ color: 'var(--text)' }}>{x}</span></li>)}
+              </ul>
+            )}
+          </div>
+          {f.similarOwned.length > 0 && (
+            <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>
+              {t('verdict.similarOwned')}: {f.similarOwned.map((s) => `${s.title}${s.hoursPlayed === 0 ? ` (${t('stats.never')})` : ''}`).join(' · ')}
+            </div>
+          )}
+          <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+            {t('verdict.note')} · {v.model} · {t('search.tokens', { n: v.usage.promptTokens + v.usage.completionTokens })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 // ---------- Steam achievements ----------
 
 const AchievementsBlock: React.FC<{ appid: number }> = ({ appid }) => {
@@ -741,8 +857,15 @@ export const GameView: React.FC<{ appid: number | null; game: Game | null; embed
     }
   };
 
-  const heroArt = details?.headerImage ?? epic?.image ?? libGame?.iconUrl ?? null;
+  // A game pulled from the Steam store (Nosgoth, delisted licences) has no
+  // appdetails any more, but the CDN header, the library entry, playtime and
+  // achievements are all still there — treat it as "delisted", not as an error.
+  const delisted = !!error && /No store data/i.test(error) && (steamEntry != null || appid != null);
+  const heroArt = details?.headerImage ?? epic?.image ?? (appid != null ? `https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/header.jpg` : null) ?? libGame?.iconUrl ?? null;
+  const profiles = useProfiles();
+  const profile = title ? profileFor(profiles, title) : null;
   const heroTags = (details?.tags.length ? details.tags : epic?.genres ?? []).slice(0, 5);
+  const profileBits = profile && profile.known ? profileLine(profile, t as (k: string, v?: Record<string, string | number>) => string) : [];
 
   return (
     <div style={embedded ? { padding: '0 28px 24px' } : { maxWidth: 1000, margin: '0 auto', padding: '0 20px 24px' }}>
@@ -871,8 +994,15 @@ export const GameView: React.FC<{ appid: number | null; game: Game | null; embed
                 {title ?? '…'}
               </h1>
             )}
+            {profileBits.length > 0 && (
+              <div title={t('tag.aiEstimate')} style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, fontSize: 12.5, color: '#b9cbe0', textShadow: '0 1px 6px rgba(0,0,0,0.6)' }}>
+                <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1, padding: '1px 5px', borderRadius: 4, border: '1px solid rgba(185,203,224,0.5)' }}>AI</span>
+                <span>{profileBits.join(' · ')}</span>
+              </div>
+            )}
             {heroTags.length > 0 && (
-              <div style={{ display: 'flex', gap: 7, marginTop: 10, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', gap: 7, marginTop: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+                <span style={{ fontSize: 10.5, color: '#9fc3e2', opacity: 0.8, letterSpacing: 0.5, textTransform: 'uppercase' }}>{t(details?.tags.length ? 'details.storeTagsSteam' : 'details.storeTagsEgs')}</span>
                 {heroTags.map((tag) => (
                   <span
                     key={tag}
@@ -892,6 +1022,26 @@ export const GameView: React.FC<{ appid: number | null; game: Game | null; embed
           </div>
         </div>
       </div>
+
+      {profile && profile.known && profile.summary && (
+        <div className={embedded ? 'rise rise-2' : undefined} style={{ ...card, display: 'flex', gap: 14, alignItems: 'flex-start' }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
+              <span className="uc-header">{t('tag.summary')}</span>
+              <span style={{ fontSize: 11.5, color: 'var(--muted)' }}>{t('tag.aiEstimate')}</span>
+            </div>
+            <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.55, color: 'var(--text)' }}>{profile.summary}</p>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>
+              <span style={{ fontSize: 10.5, color: 'var(--muted)', letterSpacing: 0.5, textTransform: 'uppercase', alignSelf: 'center' }}>{t('tag.aiTags')}</span>
+              {profile.moods.map((m) => <span key={m} style={chip}>{t(`tag.mood.${m}`)}</span>)}
+              {profile.modes.map((m) => <span key={m} style={{ ...chip, color: '#9fc3e2' }}>{t(`tag.mode.${m}`)}</span>)}
+              {(profile.themesLocal?.length && profile.lang === lang ? profile.themesLocal : profile.themes).map((th) => <span key={th} style={{ ...chip, color: 'var(--muted)' }}>{th}</span>)}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {appid != null && !delisted && <VerdictBlock appid={appid} owned={!!libGame} embedded={!!embedded} />}
 
       {/* Platform switcher: both tabs always visible; a platform the game
           doesn't exist on is disabled and marked. */}
@@ -920,7 +1070,16 @@ export const GameView: React.FC<{ appid: number | null; game: Game | null; embed
         })}
       </div>
 
-      {error && tab === 'Steam' && (
+      {error && tab === 'Steam' && delisted && (
+        <div style={{ ...card, display: 'flex', alignItems: 'center', gap: 12, color: 'var(--muted)', fontSize: 13.5 }}>
+          <span style={{ fontSize: 18 }}>🕸</span>
+          <span style={{ flex: 1 }}>
+            {t('details.delisted')}
+            {steamEntry?.lastPlayedAt && ` ${t('details.delistedLast', { d: new Date(steamEntry.lastPlayedAt).toLocaleDateString() })}`}
+          </span>
+        </div>
+      )}
+      {error && tab === 'Steam' && !delisted && (
         <p style={{ color: '#ff6b6b' }}>
           {t('common.error')}: {error}
         </p>
@@ -1117,7 +1276,7 @@ export const GameView: React.FC<{ appid: number | null; game: Game | null; embed
       )}
 
       {/* ===== Achievements (Steam data only) ===== */}
-      {tab === 'Steam' && appid != null && (details?.achievementsTotal ?? 0) > 0 && (
+      {tab === 'Steam' && appid != null && (details ? (details.achievementsTotal ?? 0) > 0 : delisted && steamEntry != null) && (
         <div style={card}>
           <h3 style={{ marginTop: 0 }}>{t('details.achievements')}</h3>
           <AchievementsBlock appid={appid} />

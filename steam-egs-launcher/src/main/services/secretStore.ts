@@ -30,6 +30,8 @@ export interface EpicSessionSecret {
 
 interface Secrets {
   steamApiKey?: string;
+  /** chutes.ai API key for the natural-language search (Settings → AI). */
+  chutesApiKey?: string;
   epicSession?: EpicSessionSecret;
   /** Local-bridge pairing tokens, keyed by web origin. */
   bridgePairings?: Record<string, string>;
@@ -114,6 +116,24 @@ export function setSteamApiKey(key: string): void {
 export function clearSteamApiKey(): void {
   update((s) => {
     delete s.steamApiKey;
+  });
+}
+
+// ---------- chutes.ai key (AI search) ----------
+
+export function getChutesApiKey(): string | null {
+  return readSecrets().chutesApiKey ?? null;
+}
+
+export function setChutesApiKey(key: string): void {
+  update((s) => {
+    s.chutesApiKey = key.trim();
+  });
+}
+
+export function clearChutesApiKey(): void {
+  update((s) => {
+    delete s.chutesApiKey;
   });
 }
 

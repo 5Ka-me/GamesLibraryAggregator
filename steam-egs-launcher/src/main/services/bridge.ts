@@ -118,15 +118,14 @@ async function askUser(origin: string): Promise<boolean> {
       }
       const opts = {
         type: 'question' as const,
-        buttons: ['Allow / Разрешить', 'Deny / Отклонить'],
+        buttons: ['Allow', 'Deny'],
         defaultId: 1,
         cancelId: 1,
         title: 'GL Aggregator',
         message: 'Allow this website to read your game library?',
-        detail:
-          `${origin}\n\n` +
-          'Разрешить этому сайту читать вашу библиотеку игр? ' +
-          'Доступ только на чтение (библиотека, статистика, ачивки); отозвать можно в Настройках.',
+        detail: `${origin}
+
+Read-only access (library, statistics, achievements). You can revoke it in Settings.`,
       };
       const { response } = win
         ? await dialog.showMessageBox(win, opts)

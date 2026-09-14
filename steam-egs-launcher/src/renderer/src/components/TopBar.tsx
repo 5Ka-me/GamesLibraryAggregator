@@ -23,6 +23,7 @@ const LogoMark: React.FC = () => (
 const items = [
   { to: '/', labelKey: 'sidebar.library', end: false, match: (p: string) => p === '/' || p.startsWith('/library') || p === '/game' },
   { to: '/store', labelKey: 'sidebar.store', end: false, match: (p: string) => p.startsWith('/store') },
+  { to: '/ai', labelKey: 'sidebar.search', end: false, match: (p: string) => p.startsWith('/ai') || p.startsWith('/search') },
   { to: '/random', labelKey: 'sidebar.random', end: false, match: (p: string) => p.startsWith('/random') },
   { to: '/stats', labelKey: 'sidebar.stats', end: false, match: (p: string) => p.startsWith('/stats') },
 ];

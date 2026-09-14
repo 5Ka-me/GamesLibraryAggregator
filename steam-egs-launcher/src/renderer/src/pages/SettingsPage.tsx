@@ -10,7 +10,7 @@ import {
 } from '@app/shared';
 import { getLibraryView, LIBRARY_VIEW_KEY, type LibraryView } from './LibraryPage';
 import { useLegendary } from '../legendary/LegendaryProvider';
-import type { UpdateState } from '../../../preload';
+import type { AiModelInfo, AiStatus, EnrichProgress, EnrichStatus, UpdateState } from '../../../preload';
 
 const card: React.CSSProperties = {
   border: '1px solid var(--border)',
@@ -73,6 +73,201 @@ const AppearancePanel: React.FC = () => {
           </select>
         </label>
       </div>
+    </div>
+  );
+};
+
+// ---- AI search (chutes.ai): key, model, spend ----
+const AiPanel: React.FC = () => {
+  const { t } = useI18n();
+  const [status, setStatus] = useState<AiStatus | null>(null);
+  const [key, setKey] = useState('');
+  const [models, setModels] = useState<AiModelInfo[] | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const refresh = useCallback(() => window.launcher.aiStatus().then(setStatus).catch(() => undefined), []);
+  useEffect(() => {
+    void refresh();
+    window.launcher.aiListModels().then(setModels).catch(() => setModels([]));
+  }, [refresh]);
+
+  const act = async (fn: () => Promise<AiStatus>) => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      setStatus(await fn());
+      setMsg('✅');
+    } catch (e) {
+      setMsg(`${t('common.error')}: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const price = (m: AiModelInfo) =>
+    m.promptPrice != null && m.completionPrice != null ? ` · $${m.promptPrice}/$${m.completionPrice} per 1M` : '';
+  const roleLabel = (m: AiModelInfo) => t(`ai.role.${m.role}`);
+  const current = status?.model ?? '';
+  const known = models?.some((m) => m.id === current);
+
+  return (
+    <div style={card}>
+      <h3 style={{ marginTop: 0 }}>{t('ai.title')}</h3>
+      <p style={{ margin: '4px 0 12px', color: 'var(--muted)', fontSize: 13 }}>{t('ai.desc')}</p>
+
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
+        <input
+          type="password"
+          value={key}
+          onChange={(e) => setKey(e.target.value)}
+          placeholder={status?.configured ? t('ai.keySaved') : t('ai.keyPlaceholder')}
+          autoComplete="off"
+          style={{ width: 360 }}
+        />
+        <button style={syncBtn} disabled={busy || !key.trim()} onClick={() => void act(() => window.launcher.aiSetKey(key).then((s) => { setKey(''); return s; }))}>
+          {t('ai.saveKey')}
+        </button>
+        {status?.configured && (
+          <button style={btn} disabled={busy} onClick={() => void act(() => window.launcher.aiClearKey())}>
+            {t('ai.clearKey')}
+          </button>
+        )}
+        {msg && <span style={{ fontSize: 13, color: 'var(--muted)' }}>{msg}</span>}
+      </div>
+      <p style={{ margin: '0 0 14px', color: 'var(--muted)', fontSize: 12 }}>
+        {t('ai.keyHint')}{' '}
+        <a href="#" onClick={(e) => { e.preventDefault(); void window.launcher.openExternal('https://chutes.ai/'); }}>chutes.ai</a>
+      </p>
+
+      <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12, color: 'var(--muted)', maxWidth: 520 }}>
+        {t('ai.model')}
+        <select
+          value={known ? current : '__custom'}
+          disabled={busy || !models}
+          onChange={(e) => {
+            if (e.target.value !== '__custom') void act(() => window.launcher.aiSetModel(e.target.value));
+          }}
+          style={{ ...btn, paddingRight: 8, maxWidth: 520 }}
+        >
+          {!known && current && <option value="__custom">{current}</option>}
+          {(models ?? []).map((m) => (
+            <option key={m.id} value={m.id}>
+              {roleLabel(m)} — {m.id}{price(m)}
+            </option>
+          ))}
+        </select>
+      </label>
+      <p style={{ margin: '6px 0 0', color: 'var(--muted)', fontSize: 12 }}>{t('ai.modelHint')}</p>
+
+      {status && (
+        <p style={{ margin: '12px 0 0', fontSize: 12.5, color: 'var(--muted)' }}>
+          {t('ai.usage', { r: status.usage.requests, i: status.usage.promptTokens.toLocaleString(), o: status.usage.completionTokens.toLocaleString() })}
+        </p>
+      )}
+      <p style={{ margin: '8px 0 0', fontSize: 12, color: 'var(--muted)' }}>{t('ai.privacy')}</p>
+
+      <EnrichmentBlock enabled={!!status?.configured} />
+    </div>
+  );
+};
+
+/** Shown wherever an AI feature is unusable because no chutes.ai key is saved. */
+export const NoKeyNote: React.FC<{ compact?: boolean }> = ({ compact }) => {
+  const { t } = useI18n();
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: compact ? '6px 10px' : '8px 12px', borderRadius: 8, border: '1px solid rgba(87,184,240,0.35)', background: 'rgba(87,184,240,0.08)', fontSize: compact ? 12 : 12.5, color: 'var(--text)', margin: '0 0 10px' }}>
+      <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1, padding: '1px 5px', borderRadius: 4, border: '1px solid rgba(185,203,224,0.5)', color: '#b9cbe0' }}>AI</span>
+      <span>{t('ai.needKey')}</span>
+    </div>
+  );
+};
+
+/** One-off (then incremental) AI profiles for the whole library, with the cost up front. */
+const EnrichmentBlock: React.FC<{ enabled: boolean }> = ({ enabled }) => {
+  const { t, lang } = useI18n();
+  const [st, setSt] = useState<EnrichStatus | null>(null);
+  const [progress, setProgress] = useState<EnrichProgress | null>(null);
+  // Which run the warning is for: the missing games, or missing + profiles written in another language.
+  const [confirm, setConfirm] = useState<'none' | 'missing' | 'lang'>('none');
+
+  const refresh = useCallback(() => window.launcher.enrichStatus(lang).then(setSt).catch(() => undefined), [lang]);
+  useEffect(() => {
+    void refresh();
+    return window.launcher.onEnrichProgress((p) => {
+      setProgress(p);
+      if (!p.running) void refresh();
+    });
+  }, [refresh]);
+
+  const running = !!(progress?.running || st?.running);
+  const est = confirm === 'lang' ? st?.estimateOtherLang : st?.estimate;
+  const count = confirm === 'lang' ? (st?.missing ?? 0) + (st?.otherLang ?? 0) : st?.missing ?? 0;
+  const usd = est?.usd;
+  const cost = usd == null ? '' : usd < 0.01 ? '< $0.01' : `≈ $${usd.toFixed(2)}`;
+
+  return (
+    <div style={{ marginTop: 18, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+      <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 4 }}>{t('enrich.title')}</div>
+      <p style={{ margin: '0 0 10px', color: 'var(--muted)', fontSize: 13 }}>{t('enrich.desc')}</p>
+      {!enabled && <NoKeyNote />}
+      {st && (
+        <p style={{ margin: '0 0 10px', fontSize: 13 }}>
+          {t('enrich.state', { p: st.profiles, g: st.games })}
+          {st.lastRunAt && <span style={{ color: 'var(--muted)' }}> · {t('enrich.lastRun', { d: new Date(st.lastRunAt).toLocaleDateString() })}</span>}
+        </p>
+      )}
+
+      {running && progress ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 520 }}>
+          <div style={{ height: 8, borderRadius: 4, background: 'var(--panel-2)', overflow: 'hidden' }}>
+            <div style={{ width: `${progress.total ? Math.round(((progress.done + progress.failed) / progress.total) * 100) : 0}%`, height: '100%', background: 'var(--accent)', borderRadius: 4, transition: 'width 0.4s ease' }} />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 12.5, color: 'var(--muted)' }}>
+            <span>{t('enrich.progress', { d: progress.done + progress.failed, n: progress.total, tok: (progress.promptTokens + progress.completionTokens).toLocaleString() })}</span>
+            <button style={btn} onClick={() => void window.launcher.enrichCancel()}>{t('enrich.cancel')}</button>
+          </div>
+        </div>
+      ) : st && confirm !== 'none' && est ? (
+        <div style={{ padding: '12px 14px', borderRadius: 10, border: '1px solid rgba(87,184,240,0.45)', background: 'rgba(87,184,240,0.08)', maxWidth: 620 }}>
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>⚠ {t('enrich.warnTitle')}</div>
+          <p style={{ margin: '0 0 10px', fontSize: 13, lineHeight: 1.5 }}>
+            {t('enrich.warnBody', { n: count, req: est.requests, tok: est.tokens.toLocaleString(), cost, min: est.minutes, model: est.model })}
+          </p>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button style={syncBtn} onClick={() => { const redo = confirm === 'lang'; setConfirm('none'); void window.launcher.enrichStart(lang, redo).then(setSt); }}>{t('enrich.confirm')}</button>
+            <button style={btn} onClick={() => setConfirm('none')}>{t('enrich.back')}</button>
+          </div>
+        </div>
+      ) : st ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'flex-start' }}>
+          {st.missing > 0 ? (
+            <button style={syncBtn} disabled={!enabled} onClick={() => setConfirm('missing')}>
+              {t('enrich.button', { n: st.missing })}
+            </button>
+          ) : (
+            <p style={{ margin: 0, fontSize: 13, color: 'var(--success)' }}>✓ {t('enrich.complete')}</p>
+          )}
+          {st.otherLang > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', fontSize: 13 }}>
+              <span style={{ color: 'var(--muted)' }}>{t('enrich.otherLang', { n: st.otherLang })}</span>
+              <button style={btn} disabled={!enabled} onClick={() => setConfirm('lang')}>{t('enrich.redoLang')}</button>
+            </div>
+          )}
+        </div>
+      ) : null}
+
+      {progress && !progress.running && progress.total > 0 && (
+        <p style={{ margin: '10px 0 0', fontSize: 12.5, color: progress.error ? '#ff9f6b' : 'var(--muted)' }}>
+          {progress.cancelled ? t('enrich.cancelled') : t('enrich.finished', { d: progress.done, f: progress.failed, tok: (progress.promptTokens + progress.completionTokens).toLocaleString() })}
+          {progress.error ? ` · ${progress.error.slice(0, 160)}` : ''}
+        </p>
+      )}
+      {st && st.profiles > 0 && !running && (
+        <button style={{ ...btn, marginTop: 10, background: 'transparent', color: 'var(--muted)' }} onClick={() => { if (window.confirm(t('enrich.clearConfirm'))) void window.launcher.enrichClear(lang).then(setSt); }}>
+          {t('enrich.clear')}
+        </button>
+      )}
     </div>
   );
 };
@@ -171,19 +366,17 @@ const InstallPathPanel: React.FC = () => {
 
   return (
     <div style={card}>
-      <h3 style={{ marginTop: 0 }}>EGS install folder</h3>
-      <p style={{ margin: '4px 0 10px', color: 'var(--muted)' }}>
-        Where legendary installs Epic games. Leave empty for legendary&apos;s default.
-      </p>
+      <h3 style={{ marginTop: 0 }}>{t('settings.installPath')}</h3>
+      <p style={{ margin: '4px 0 10px', color: 'var(--muted)' }}>{t('settings.installPath.desc')}</p>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         <input
           value={value}
           onChange={(e) => setValue(e.target.value)}
-          placeholder="e.g. D:\\Games\\Epic"
+          placeholder={t('settings.installPath.placeholder')}
           style={{ flex: 1, minWidth: 260 }}
         />
         <button style={btn} onClick={save}>
-          {status === 'saved' ? '✅' : status === 'error' ? `⚠️ ${t('common.error')}` : 'Save'}
+          {status === 'saved' ? '✅' : status === 'error' ? `⚠️ ${t('common.error')}` : t('settings.installPath.save')}
         </button>
       </div>
     </div>
@@ -385,6 +578,7 @@ const SettingsPage: React.FC = () => {
       {msg && <p style={{ padding: '8px 10px', background: 'var(--panel-2)', borderRadius: 6 }}>{msg}</p>}
 
       <AppearancePanel />
+      <AiPanel />
       <RegionsPanel steam={steam} epic={epic} onChanged={loadAccounts} />
       <InstallPathPanel />
       <UpdatesPanel />

@@ -26,6 +26,18 @@ See the [root README](../README.md) for features, quick start and configuration.
     private profiles work) merged with the public `IPlayerService/GetGameAchievements` schema.
     Whole-library achievement progress comes from one batched `IPlayerService/GetAchievementsProgress`
     call per 100 games. Steam sync also keeps last-launch, two-week and Steam Deck minutes.
+  - `services/assistant.ts` — the "AI" page: a multi-turn assistant on chutes.ai (OpenAI-compatible
+    chat completions) that works through local *tools* (library search with coarse facts and AI-profile
+    tags, random pick, store search, store facts incl. 30-day review sample, wishlist, achievements,
+    statistics). Up to 3 tool rounds per turn; every game it names is resolved against the real
+    library/store before it becomes a card with actions. Also the "worth buying?" verdict on the game
+    page (facts shown separately from the model's opinion). Key in the OS keystore (Settings → AI).
+  - `services/enrichment.ts` — one-off, button-driven "game profiles" for the whole library: length,
+    genres, moods, themes, modes and a short summary per title (only titles are sent, the estimate
+    and cost are shown before the run, batches are saved as they finish). Profiles feed the game page,
+    tag chips in the library and the random reel, the hours-by-genre statistic, and make tag-based
+    search answer offline. `services/aiClient.ts` is the shared chutes.ai client.
+    Prompts and practices: [docs/ai-integration.md](../docs/ai-integration.md).
   - `services/playtimeHistory.ts` — one playtime snapshot per day (written on every sync,
     `%APPDATA%/steam-egs-launcher/playtime-history.json`, 400 days) so the Statistics page can show
     real deltas — the stores only report lifetime totals.
@@ -58,8 +70,8 @@ See the [root README](../README.md) for features, quick start and configuration.
     approximate cross-currency price comparison.
   - `services/steamLauncher.ts` — `steam://` deep links; store pages open in the Steam client when installed.
 - **preload/** — a small typed `window.launcher` bridge (contextIsolation on).
-- **renderer/** — React UI: library, store (home/sections/wishlist/search), random-game reel, statistics (Replay-style overview + the whole library as Steam's profile games list, batched), unified game page
-  (`GameView`, also embedded in the library's split view). The shell is Steam-like: the title bar is
+- **renderer/** — React UI: library, store (home/sections/wishlist/search), AI chat, random-game reel, statistics (Replay-style overview + the whole library as Steam's profile games list, batched), unified game page
+  (`GameView`, also embedded in the library's split view), Search (natural-language, see `services/ai.ts`). The shell is Steam-like: the title bar is
   drawn by the renderer (`TopBar` — section nav, update chip, profile → Settings) as a drag region with
   Windows' own min/max/close buttons overlaid in app colours (`titleBarStyle: 'hidden'` +
   `titleBarOverlay`). The library defaults to a split view — game list with icons on the left, Home

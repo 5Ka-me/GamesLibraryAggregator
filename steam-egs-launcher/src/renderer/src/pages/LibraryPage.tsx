@@ -18,6 +18,7 @@ import {
 import { GameView } from './GameDetailsPage';
 import { HomeIcon, ChevronDownIcon, SearchIcon } from '../components/icons';
 import { useScrollRestore } from '../hooks/useScrollRestore';
+import { TAG_CHIPS, chipMatches, profileFor, useProfiles, type TagChip } from '../hooks/useProfiles';
 
 // Library. Two views, chosen in Settings:
 //   list (default) — Steam-like split: the game list on the left (search,
@@ -124,12 +125,21 @@ const LibraryList: React.FC<{
   const [source, setSource] = useState<Source | 'all'>('all');
   const [openInstalled, setOpenInstalled] = useState(true);
   const [openAll, setOpenAll] = useState(true);
+  const [chips, setChips] = useState<TagChip[]>([]);
+  const [showChips, setShowChips] = useState(false);
+  const profiles = useProfiles();
+  const hasProfiles = Object.keys(profiles).length > 0;
 
   const installedSet = useMemo(() => (actions ? new Set(games.filter((g) => isInstalled(g, actions))) : new Set<Game>()), [games, actions]);
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return games.filter((g) => (source === 'all' || g.sources.includes(source)) && (!q || g.title.toLowerCase().includes(q)));
-  }, [games, query, source]);
+    return games.filter(
+      (g) =>
+        (source === 'all' || g.sources.includes(source)) &&
+        (!q || g.title.toLowerCase().includes(q)) &&
+        (chips.length === 0 || chips.every((c) => chipMatches(c, profileFor(profiles, g))))
+    );
+  }, [games, query, source, chips, profiles]);
   const installed = filtered.filter((g) => installedSet.has(g));
 
   // Keep the selected row in view when the selection comes from the URL
@@ -174,18 +184,33 @@ const LibraryList: React.FC<{
         </span>
         <span className="ttl" style={{ fontWeight: 600, letterSpacing: 0.3 }}>{t('lib.home')}</span>
       </button>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 32, padding: '0 10px', borderRadius: 8, background: 'var(--input-bg)', border: '1px solid var(--border)', color: '#6f8098', margin: '0 2px 8px 2px' }}>
+      <div className="field-wrap" style={{ display: 'flex', alignItems: 'center', gap: 8, height: 32, padding: '0 10px', borderRadius: 8, background: 'var(--input-bg)', border: '1px solid var(--border)', color: '#6f8098', margin: '0 2px 8px 2px' }}>
         <SearchIcon />
         <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t('lib.searchLibrary')} style={{ flex: 1, minWidth: 0, background: 'transparent', border: 'none', padding: 0, fontSize: 13 }} />
+        {query && <button className="field-clear" onClick={() => setQuery('')} title={t('chat.clear')}>✕</button>}
       </div>
-      <div style={{ display: 'flex', gap: 5, margin: '0 2px 12px 2px' }}>
+      <div style={{ display: 'flex', gap: 5, margin: '0 2px 8px 2px' }}>
         <button className={`pill${source === 'all' ? ' pill-active' : ''}`} style={{ padding: '5px 10px', fontSize: 12 }} onClick={() => setSource('all')}>{t('filter.all')}</button>
         {SOURCES.map((s) => (
           <button key={s.id} className={`pill${source === s.id ? ' pill-active' : ''}`} style={{ padding: '5px 10px', fontSize: 12 }} onClick={() => setSource(source === s.id ? 'all' : s.id)}>
             {s.label}
           </button>
         ))}
+        {hasProfiles && (
+          <button className={`pill${chips.length ? ' pill-active' : ''}`} style={{ padding: '5px 9px', fontSize: 12, marginLeft: 'auto' }} onClick={() => setShowChips((v) => !v)} title={t('tag.aiEstimate')}>
+            {showChips ? '▾' : '▸'} {t('lib.filters')}{chips.length ? ` · ${chips.length}` : ''}
+          </button>
+        )}
       </div>
+      {hasProfiles && showChips && (
+        <div className="rise" style={{ display: 'flex', gap: 4, flexWrap: 'wrap', margin: '0 2px 12px 2px' }} title={t('tag.aiEstimate')}>
+          {TAG_CHIPS.map((c) => (
+            <button key={c} className={`pill${chips.includes(c) ? ' pill-active' : ''}`} style={{ padding: '3px 8px', fontSize: 11.5 }} onClick={() => setChips((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]))}>
+              {t(`tag.chip.${c}`)}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div ref={listRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 14 }}>
         {installed.length > 0 && (
@@ -322,6 +347,13 @@ const LibraryPage: React.FC = () => {
   const navigate = useNavigate();
   const { key } = useParams<{ key: string }>();
   const [view] = useState<LibraryView>(getLibraryView);
+  const [gridChips, setGridChips] = useState<TagChip[]>([]);
+  const [showGridChips, setShowGridChips] = useState(false);
+  const profiles = useProfiles();
+  const gridFilter = useMemo(
+    () => (gridChips.length ? (g: Game) => gridChips.every((c) => chipMatches(c, profileFor(profiles, g))) : undefined),
+    [gridChips, profiles]
+  );
   const [games, setGames] = useState<Game[]>(cachedGames ?? []);
   const [recent, setRecent] = useState<SteamRecentGame[]>(cachedRecent ?? []);
   const [error, setError] = useState<string | null>(null);
@@ -375,7 +407,25 @@ const LibraryPage: React.FC = () => {
             <div style={{ marginBottom: 26 }}>
               <RecentShelf recent={recent} games={games} onOpen={(g) => navigate('/game', { state: { game: g } })} />
             </div>
-            <GameList games={games} stateKey="library" />
+            <GameList
+              games={games}
+              stateKey="library"
+              extraFilter={gridFilter}
+              extraControls={
+                Object.keys(profiles).length > 0 && (
+                  <span style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginLeft: 6, alignItems: 'center' }} title={t('tag.aiEstimate')}>
+                    <button className={`pill${gridChips.length ? ' pill-active' : ''}`} style={{ padding: '5px 10px', fontSize: 12 }} onClick={() => setShowGridChips((v) => !v)}>
+                      {showGridChips ? '▾' : '▸'} {t('lib.filters')}{gridChips.length ? ` · ${gridChips.length}` : ''}
+                    </button>
+                    {showGridChips && TAG_CHIPS.map((c) => (
+                      <button key={c} className={`pill${gridChips.includes(c) ? ' pill-active' : ''}`} style={{ padding: '5px 10px', fontSize: 12 }} onClick={() => setGridChips((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]))}>
+                        {t(`tag.chip.${c}`)}
+                      </button>
+                    ))}
+                  </span>
+                )
+              }
+            />
           </>
         )}
       </div>

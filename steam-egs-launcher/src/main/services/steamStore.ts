@@ -50,6 +50,8 @@ export interface StoreItem {
   comingSoon?: boolean;
   /** Steam release date (unix seconds), when known. */
   releaseUnix?: number;
+  /** What the app is (GetItems `type`: 0 game, 4 DLC, 11 soundtrack); absent = unknown. */
+  kind?: 'game' | 'dlc' | 'music' | 'other';
 }
 
 export interface StoreSection {
@@ -335,6 +337,46 @@ async function genreRow(genre: string, lang: string): Promise<StoreSection | nul
 
 // ===================== Search =====================
 
+export interface ReviewFacts {
+  /**
+   * Reviews from the last 30 days — a SAMPLE (up to 100 most helpful): the
+   * appreviews endpoint's query_summary is always all-time, so the recent
+   * share is counted from the reviews it returns for day_range=30.
+   */
+  recentTotal: number | null;
+  recentPositive: number | null;
+  /** A few of the most helpful reviews, trimmed — public text, for the AI verdict. */
+  snippets: { up: boolean; text: string }[];
+}
+
+/**
+ * Review facts beyond the summary appdetails already carries: the 30-day
+ * window (trend vs. all-time) and a handful of helpful review texts. Cached
+ * like other dynamic store data.
+ */
+export async function appReviewsFacts(appid: number, lang: string, snippets = 0): Promise<ReviewFacts> {
+  const { l } = region(lang);
+  return cached(NS, `reviews:${l}:${appid}:${snippets}`, getStoreCacheTtlMs(), async () => {
+    const base = `https://store.steampowered.com/appreviews/${appid}?json=1&purchase_type=all`;
+    const [recent, helpful] = await Promise.all([
+      getJson<any>(`${base}&language=all&filter=all&day_range=30&num_per_page=100&review_type=all`).catch(() => null),
+      snippets > 0
+        ? getJson<any>(`${base}&language=${l === 'russian' ? 'russian,english' : 'english'}&filter=all&num_per_page=${Math.min(20, snippets)}`).catch(() => null)
+        : Promise.resolve(null),
+    ]);
+    const recentList: any[] = Array.isArray(recent?.reviews) ? recent.reviews : [];
+    const reviews: any[] = Array.isArray(helpful?.reviews) ? helpful.reviews : [];
+    return {
+      recentTotal: recent ? recentList.length : null,
+      recentPositive: recent ? recentList.filter((r) => r?.voted_up).length : null,
+      snippets: reviews
+        .filter((r) => typeof r?.review === 'string' && r.review.trim().length > 40)
+        .slice(0, snippets)
+        .map((r) => ({ up: !!r.voted_up, text: String(r.review).replace(/\s+/g, ' ').trim().slice(0, 400) })),
+    };
+  });
+}
+
 export async function storeSearch(term: string, lang: string): Promise<StoreItem[]> {
   const { l, cc } = region(lang);
   const key = `search:${lang}:${cc}:${term.trim().toLowerCase()}`;
@@ -503,7 +545,7 @@ async function fetchMetaChunks(
     const input = {
       ids: chunk.map((appid) => ({ appid })),
       context: { language: l, country_code: cc, steam_realm: 1 },
-      data_request: { include_assets: true, include_pricing: true, include_release: true },
+      data_request: { include_basic_info: true, include_assets: true, include_pricing: true, include_release: true },
     };
     try {
       const resp = await getJson<any>(
@@ -520,9 +562,12 @@ async function fetchMetaChunks(
           typeof si.release?.steam_release_date === 'number' && si.release.steam_release_date > 0
             ? si.release.steam_release_date
             : undefined;
+        const kind: StoreItem['kind'] =
+          si.type === 0 ? 'game' : si.type === 4 ? 'dlc' : si.type === 11 ? 'music' : typeof si.type === 'number' ? 'other' : undefined;
         const item: StoreItem = {
           appid: si.appid,
           name: si.name,
+          ...(kind ? { kind } : {}),
           image: assetImage(si) ?? conventionCapsule(si.appid),
           isFree: si.is_free ?? false,
           // Steam's own flag when present; otherwise derived at read time from

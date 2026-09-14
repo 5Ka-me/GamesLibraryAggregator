@@ -116,6 +116,44 @@ button:disabled {
   cursor: not-allowed !important;
 }
 
+/* Focus in the app's own blue instead of the browser's default ring. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(87, 184, 240, 0.22);
+}
+/* Composite fields (icon + input + clear): the wrapper carries the focus look, the inner input none. */
+.field-wrap:focus-within {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 2px rgba(87, 184, 240, 0.22);
+}
+.field-wrap input:focus {
+  box-shadow: none;
+}
+.field-clear {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 22px;
+  padding: 0;
+  cursor: pointer;
+}
+.field-clear:hover {
+  background: rgba(255, 255, 255, 0.16);
+  color: var(--text);
+}
+
 /* ===== Section headers (uppercase, tracked — like the mockups) ===== */
 .uc-header {
   font-size: 12.5px;
@@ -622,4 +660,72 @@ button:disabled {
 }
 .shelf-card:hover {
   box-shadow: 0 14px 34px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(87, 184, 240, 0.5);
+}
+
+/* ===== AI search: thinking indicator + skeletons ===== */
+@keyframes ai-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(350%);
+  }
+}
+.ai-progress {
+  position: relative;
+  height: 3px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: rgba(87, 184, 240, 0.12);
+}
+.ai-progress::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 30%;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  animation: ai-sweep 1.3s ease-in-out infinite;
+}
+@keyframes ai-shimmer {
+  0% {
+    background-position: -400px 0;
+  }
+  100% {
+    background-position: 400px 0;
+  }
+}
+.skel {
+  border-radius: 8px;
+  background: linear-gradient(90deg, var(--panel) 0%, var(--panel-2) 50%, var(--panel) 100%);
+  background-size: 800px 100%;
+  animation: ai-shimmer 1.4s linear infinite;
+}
+@keyframes ai-dots {
+  0%, 20% {
+    opacity: 0.2;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.2;
+  }
+}
+.ai-dots span {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin: 0 2px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: ai-dots 1.2s infinite;
+}
+.ai-dots span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.ai-dots span:nth-child(3) {
+  animation-delay: 0.4s;
 }

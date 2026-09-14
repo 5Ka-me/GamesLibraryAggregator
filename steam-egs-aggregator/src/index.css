@@ -1,4 +1,4 @@
-/* Тёмная тема — по умолчанию */
+/* Dark theme — the default */
 :root,
 :root[data-theme='dark'] {
   --bg: #121212;

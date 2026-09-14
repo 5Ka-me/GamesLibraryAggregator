@@ -20,6 +20,11 @@ import type {
 
 export type { SectionSort, StoreSection };
 import type { EpicDetails } from '../main/services/epicStore';
+import type { AiModelInfo, AiStatus } from '../main/services/aiClient';
+import type { AssistantGame, AssistantProgress, AssistantReply, ChatTurn, GameFacts, GameVerdict } from '../main/services/assistant';
+import type { EnrichProgress, EnrichStatus, GameProfile, TagQuery } from '../main/services/enrichment';
+
+export type { AiModelInfo, AiStatus, AssistantGame, AssistantProgress, AssistantReply, ChatTurn, GameFacts, GameVerdict, EnrichProgress, EnrichStatus, GameProfile, TagQuery };
 
 export type { EpicDetails, GameDetails, StoreHome, StoreItem, StoreSectionPage, WishlistEntry, WishlistItem };
 
@@ -49,6 +54,34 @@ const launcher = {
   quit: (): Promise<void> => ipcRenderer.invoke('app:quit'),
 
   // Auto-update (GitHub Releases; inert in dev builds).
+  // AI search (chutes.ai). The key never reaches the renderer — only status.
+  aiStatus: (): Promise<AiStatus> => ipcRenderer.invoke('ai:status'),
+  aiSetKey: (key: string): Promise<AiStatus> => ipcRenderer.invoke('ai:setKey', key),
+  aiClearKey: (): Promise<AiStatus> => ipcRenderer.invoke('ai:clearKey'),
+  aiSetModel: (model: string): Promise<AiStatus> => ipcRenderer.invoke('ai:setModel', model),
+  aiListModels: (): Promise<AiModelInfo[]> => ipcRenderer.invoke('ai:models'),
+  /** One assistant turn: the whole visible thread goes in, the model's answer + resolved game cards come out. */
+  aiChat: (history: ChatTurn[], lang: string): Promise<AssistantReply> => ipcRenderer.invoke('ai:chat', history, lang),
+  /** "Worth buying?" analysis for one Steam store game (paid call; cached for an hour). */
+  aiVerdict: (appid: number, lang: string, force?: boolean): Promise<GameVerdict> => ipcRenderer.invoke('ai:verdict', appid, lang, force ?? false),
+  onAiProgress: (cb: (p: AssistantProgress) => void): (() => void) => {
+    const listener = (_e: unknown, payload: AssistantProgress) => cb(payload);
+    ipcRenderer.on('ai:progress', listener);
+    return () => ipcRenderer.removeListener('ai:progress', listener);
+  },
+
+  // Library enrichment (AI game profiles) — button-driven, progress streams as events.
+  enrichStatus: (lang: string): Promise<EnrichStatus> => ipcRenderer.invoke('enrich:status', lang),
+  enrichGet: (): Promise<Record<string, GameProfile>> => ipcRenderer.invoke('enrich:get'),
+  enrichStart: (lang: string, redoOtherLang?: boolean): Promise<EnrichStatus> => ipcRenderer.invoke('enrich:start', lang, redoOtherLang ?? false),
+  enrichCancel: (): Promise<void> => ipcRenderer.invoke('enrich:cancel'),
+  enrichClear: (lang: string): Promise<EnrichStatus> => ipcRenderer.invoke('enrich:clear', lang),
+  onEnrichProgress: (cb: (p: EnrichProgress) => void): (() => void) => {
+    const listener = (_e: unknown, payload: EnrichProgress) => cb(payload);
+    ipcRenderer.on('enrich:progress', listener);
+    return () => ipcRenderer.removeListener('enrich:progress', listener);
+  },
+
   appVersion: (): Promise<string> => ipcRenderer.invoke('app:version'),
   updateStatus: (): Promise<UpdateState> => ipcRenderer.invoke('update:state'),
   updateCheck: (): Promise<UpdateState> => ipcRenderer.invoke('update:check'),

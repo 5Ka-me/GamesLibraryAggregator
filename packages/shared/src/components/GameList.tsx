@@ -22,7 +22,14 @@ interface ListState {
 // and back) — keyed by the host-provided stateKey.
 const savedListStates = new Map<string, ListState>();
 
-const GameList: React.FC<{ games: Game[]; stateKey?: string }> = ({ games, stateKey }) => {
+const GameList: React.FC<{
+  games: Game[];
+  stateKey?: string;
+  /** Extra AND-condition owned by the host (the launcher's AI tag chips); undefined = no extra filter. */
+  extraFilter?: (g: Game) => boolean;
+  /** Extra controls rendered in the filter row, after the built-in buttons. */
+  extraControls?: React.ReactNode;
+}> = ({ games, stateKey, extraFilter, extraControls }) => {
   const { t } = useI18n();
   const actions = useLibraryActions();
   const saved = stateKey ? savedListStates.get(stateKey) : undefined;
@@ -67,6 +74,7 @@ const GameList: React.FC<{ games: Game[]; stateKey?: string }> = ({ games, state
       // AND semantics: the game must be on EVERY selected platform.
       if (sources.length > 0 && !sources.every((s) => g.sources.includes(s))) return false;
       if (installedOnly && !installedSet.has(g)) return false;
+      if (extraFilter && !extraFilter(g)) return false;
       return g.title.toLowerCase().includes(q);
     });
     if (sort === 'playtime') {
@@ -77,7 +85,7 @@ const GameList: React.FC<{ games: Game[]; stateKey?: string }> = ({ games, state
       list.sort((a, b) => minutes(b) - minutes(a) || a.title.localeCompare(b.title));
     }
     return list;
-  }, [games, sources, installedOnly, query, installedSet, sort]);
+  }, [games, sources, installedOnly, query, installedSet, sort, extraFilter]);
 
   // Reset the visible window when the filter/search changes (but not on the
   // initial mount — a restored `visible` must survive coming back to the list).
@@ -134,6 +142,7 @@ const GameList: React.FC<{ games: Game[]; stateKey?: string }> = ({ games, state
             {t('filter.installed')} ({counts.installed})
           </button>
         )}
+        {extraControls}
 
         <select
           aria-label={t('lib.sort')}
