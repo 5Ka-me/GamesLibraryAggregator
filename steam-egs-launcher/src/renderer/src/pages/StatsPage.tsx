@@ -15,6 +15,7 @@ import {
   type PlaytimeHistory,
 } from '@app/shared';
 import { profileFor, useProfiles } from '../hooks/useProfiles';
+import { useCollections } from '../hooks/useCollections';
 
 // Statistics — two tabs.
 //   Overview: a Steam-Replay-like dashboard computed locally from data the
@@ -280,6 +281,7 @@ const StatsPage: React.FC = () => {
   const [history, setHistory] = useState<PlaytimeHistory | null>(cachedHistory);
   const [error, setError] = useState<string | null>(null);
   const profiles = useProfiles();
+  const col = useCollections();
 
   const load = useCallback(() => {
     api
@@ -313,7 +315,7 @@ const StatsPage: React.FC = () => {
   const progress = useProgress(games);
 
   const recentMap = useMemo(() => new Map((recent ?? []).map((r) => [r.appId, r.playtime2Weeks])), [recent]);
-  const rows = useMemo(() => (games ? buildRows(games, sel, recentMap, progress) : []), [games, sel, recentMap, progress]);
+  const rows = useMemo(() => (games ? buildRows(games.filter((g) => !col.isHidden(g)), sel, recentMap, progress) : []), [games, sel, recentMap, progress, col]);
 
   // ----- period scope -----
   const scoped = useMemo<Row[]>(() => {

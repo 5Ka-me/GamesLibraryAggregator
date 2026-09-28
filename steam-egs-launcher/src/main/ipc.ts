@@ -2,7 +2,8 @@ import { app, ipcMain, shell } from 'electron';
 import { apiFetch, ApiRequestInit } from './services/apiClient';
 import { getBridgeEnabled, setBridgeEnabled, getInstallBasePath, setInstallBasePath } from './config';
 import { bridgeStatus, revokeBridgeOrigin, startBridge, stopBridge } from './services/bridge';
-import { openDeepLink, openSteamStorePage } from './services/steamLauncher';
+import { openDeepLink, openSteamStorePage, openWebUrl } from './services/steamLauncher';
+import { inventoryApp, inventoryCardSets, inventoryOverview, inventoryPrice, inventoryPrices } from './services/inventory';
 import * as legendary from './services/legendary';
 import { login as epicLogin } from './services/epicAuth';
 import { epicStoreDetails } from './services/epicStore';
@@ -17,8 +18,22 @@ import {
 import { scanInstalledSteamAppIds } from './services/steamScan';
 import { appVersion, checkForUpdates, installUpdate, updateState } from './services/updater';
 import { aiListModels, aiStatus } from './services/aiClient';
-import { assistantChat, gameVerdict, type ChatTurn } from './services/assistant';
+import { CONTEXT_LIMIT, assistantChat, gameVerdict, type ChatTurn, type ContextGame } from './services/assistant';
 import { cancelEnrichment, clearProfiles, enrichStatus, getProfiles, startEnrichment } from './services/enrichment';
+import {
+  createCollection,
+  deleteCollection,
+  importSteamCollections,
+  listCollections,
+  membershipOf,
+  previewRule,
+  reorderCollections,
+  resetToSteam,
+  resolveCollections,
+  setMembership,
+  updateCollection,
+  type GameHandle,
+} from './services/collections';
 import { clearChutesApiKey, setChutesApiKey } from './services/secretStore';
 import { setAiModel } from './config';
 import { isWebUrl, requireAppId, requireEpicAppName } from './services/validate';
@@ -46,10 +61,23 @@ export function registerIpc(): void {
   // Opening links. Only http(s) reaches the OS browser: shell.openExternal
   // would otherwise happily launch file://, UNC paths or protocol handlers,
   // and store payloads (spotlight banners, EGS slugs) are remote data.
+  // Web links: Steam pages open in the Steam client and Epic store pages in the
+  // Epic Games Launcher when those are installed, everything else in the browser.
   ipcMain.handle('external:open', (_e, url: string) => {
     if (!isWebUrl(url)) throw new Error(`Refusing to open a non-web URL: ${String(url)}`);
-    return shell.openExternal(url);
+    return openWebUrl(url);
   });
+
+  // Steam inventory — read-only.
+  const uiLang = (v: unknown): string => (v === 'ru' ? 'ru' : 'en');
+  ipcMain.handle('inventory:overview', (_e, lang: unknown, force: unknown) => inventoryOverview(uiLang(lang), force === true));
+  ipcMain.handle('inventory:app', (_e, appid: unknown, lang: unknown) => inventoryApp(requireAppId(appid), uiLang(lang)));
+  ipcMain.handle('inventory:price', (_e, appid: unknown, hashName: unknown, force: unknown) => {
+    if (typeof hashName !== 'string' || !hashName.trim() || hashName.length > 300) throw new Error('Invalid market item');
+    return inventoryPrice(requireAppId(appid), hashName, force === true);
+  });
+  ipcMain.handle('inventory:prices', () => inventoryPrices());
+  ipcMain.handle('inventory:cardSets', (_e, lang: unknown) => inventoryCardSets(uiLang(lang)));
   ipcMain.handle('deeplink:open', (_e, url: string) => openDeepLink(url));
 
   // Quit the app (sidebar close button).
@@ -85,14 +113,47 @@ export function registerIpc(): void {
     clearProfiles();
     return enrichStatus(lang === 'ru' ? 'ru' : 'en');
   });
-  ipcMain.handle('ai:chat', (_e, history: unknown, lang: unknown) => {
+
+  // ----- collections -----
+  const requireId = (v: unknown): string => {
+    if (typeof v !== 'string' || !/^[\w-]{1,40}$/.test(v)) throw new Error('Invalid collection id');
+    return v;
+  };
+  const requireHandle = (v: unknown): GameHandle => {
+    const h = v as Partial<GameHandle> | null;
+    if (!h || typeof h !== 'object' || typeof h.title !== 'string' || !Array.isArray(h.refs)) throw new Error('Invalid game handle');
+    return { title: h.title.slice(0, 300), refs: h.refs.slice(0, 8) };
+  };
+  ipcMain.handle('collections:list', () => listCollections());
+  ipcMain.handle('collections:resolve', () => resolveCollections());
+  ipcMain.handle('collections:preview', (_e, rule: unknown) => previewRule(rule && typeof rule === 'object' ? (rule as object) : {}));
+  ipcMain.handle('collections:create', (_e, input: unknown) => {
+    const i = (input && typeof input === 'object' ? input : {}) as { name?: unknown; kind?: unknown; rule?: unknown };
+    return createCollection({ name: i.name, kind: i.kind, rule: i.rule });
+  });
+  ipcMain.handle('collections:update', (_e, id: unknown, patch: unknown) => updateCollection(requireId(id), (patch && typeof patch === 'object' ? patch : {}) as object));
+  ipcMain.handle('collections:delete', (_e, id: unknown) => deleteCollection(requireId(id)));
+  ipcMain.handle('collections:reorder', (_e, ids: unknown) => reorderCollections(ids));
+  ipcMain.handle('collections:setMembership', (_e, id: unknown, handle: unknown, member: unknown) => setMembership(requireId(id), requireHandle(handle), member === true));
+  ipcMain.handle('collections:membership', (_e, handle: unknown) => membershipOf(requireHandle(handle)));
+  ipcMain.handle('collections:importSteam', () => importSteamCollections());
+  ipcMain.handle('collections:resetSteam', (_e, id: unknown) => resetToSteam(requireId(id)));
+  ipcMain.handle('ai:chat', (_e, history: unknown, lang: unknown, context: unknown) => {
+    const ctx: ContextGame[] = Array.isArray(context)
+      ? context.slice(0, CONTEXT_LIMIT).map((g: unknown) => {
+          const x = g as { title?: unknown; origin?: unknown; appid?: unknown };
+          if (typeof x.title !== 'string' || !x.title.trim() || x.title.length > 200) throw new Error('Invalid context game');
+          if (x.origin !== 'library' && x.origin !== 'wishlist' && x.origin !== 'store') throw new Error('Invalid context origin');
+          return { title: x.title.trim(), origin: x.origin, appid: typeof x.appid === 'number' && Number.isInteger(x.appid) && x.appid > 0 ? x.appid : null };
+        })
+      : [];
     if (!Array.isArray(history) || history.length === 0 || history.length > 60) throw new Error('Invalid chat history');
     const turns: ChatTurn[] = history.map((t: unknown) => {
       const x = t as { role?: unknown; content?: unknown };
       if ((x.role !== 'user' && x.role !== 'assistant') || typeof x.content !== 'string' || x.content.length > 4000) throw new Error('Invalid chat turn');
       return { role: x.role, content: x.content };
     });
-    return assistantChat(turns, lang === 'ru' ? 'ru' : 'en');
+    return assistantChat(turns, lang === 'ru' ? 'ru' : 'en', ctx);
   });
   ipcMain.handle('ai:verdict', (_e, appid: unknown, lang: unknown, force: unknown) => gameVerdict(requireAppId(appid), lang === 'ru' ? 'ru' : 'en', force === true));
   ipcMain.handle('update:state', () => updateState());

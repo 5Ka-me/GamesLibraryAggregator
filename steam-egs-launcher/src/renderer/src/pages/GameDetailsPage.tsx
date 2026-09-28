@@ -19,6 +19,8 @@ import { ctl, formatCents } from '../store/parts';
 import ScreenshotViewer, { type ViewerShot } from '../components/ScreenshotViewer';
 import { profileFor, profileLine, useProfiles } from '../hooks/useProfiles';
 import { NoKeyNote } from './SettingsPage';
+import { useCollections } from '../hooks/useCollections';
+import CollectionMenu, { type MenuAnchor } from '../components/CollectionMenu';
 
 // Unified game page. Reached from the store (/store/app/:appid) or from a
 // library card (/game with the Game in route state; works for Epic-only games).
@@ -862,6 +864,9 @@ export const GameView: React.FC<{ appid: number | null; game: Game | null; embed
   // achievements are all still there — treat it as "delisted", not as an error.
   const delisted = !!error && /No store data/i.test(error) && (steamEntry != null || appid != null);
   const heroArt = details?.headerImage ?? epic?.image ?? (appid != null ? `https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/header.jpg` : null) ?? libGame?.iconUrl ?? null;
+  const col = useCollections();
+  const [colMenu, setColMenu] = useState<MenuAnchor | null>(null);
+  const isFav = libGame ? col.isFavorite(libGame) : false;
   const profiles = useProfiles();
   const profile = title ? profileFor(profiles, title) : null;
   const heroTags = (details?.tags.length ? details.tags : epic?.genres ?? []).slice(0, 5);
@@ -904,6 +909,22 @@ export const GameView: React.FC<{ appid: number | null; game: Game | null; embed
           </button>
         )}
         <div style={{ position: 'absolute', top: 14, right: 20, zIndex: 2, display: 'flex', gap: 8 }}>
+          {libGame && (
+            <>
+              <button style={{ ...ctl, color: isFav ? '#f5c451' : undefined }} title={t(isFav ? 'col.unfavorite' : 'col.favorite')} onClick={() => void col.toggle('favorite', libGame)}>
+                {isFav ? '★' : '☆'}
+              </button>
+              <button
+                style={ctl}
+                onClick={(e) => {
+                  const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                  setColMenu({ x: r.left, y: r.bottom + 6 });
+                }}
+              >
+                {t('col.collections')}{col.memberOf(libGame).length ? ` · ${col.memberOf(libGame).length}` : ''}
+              </button>
+            </>
+          )}
           {appid != null && (
             <button
               style={{ ...ctl, background: 'var(--accent)', color: 'var(--on-accent)' }}
@@ -1022,6 +1043,8 @@ export const GameView: React.FC<{ appid: number | null; game: Game | null; embed
           </div>
         </div>
       </div>
+
+      {colMenu && libGame && <CollectionMenu game={libGame} anchor={colMenu} onClose={() => setColMenu(null)} />}
 
       {profile && profile.known && profile.summary && (
         <div className={embedded ? 'rise rise-2' : undefined} style={{ ...card, display: 'flex', gap: 14, alignItems: 'flex-start' }}>

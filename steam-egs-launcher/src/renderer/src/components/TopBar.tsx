@@ -26,6 +26,7 @@ const items = [
   { to: '/ai', labelKey: 'sidebar.search', end: false, match: (p: string) => p.startsWith('/ai') || p.startsWith('/search') },
   { to: '/random', labelKey: 'sidebar.random', end: false, match: (p: string) => p.startsWith('/random') },
   { to: '/stats', labelKey: 'sidebar.stats', end: false, match: (p: string) => p.startsWith('/stats') },
+  { to: '/inventory', labelKey: 'sidebar.inventory', end: false, match: (p: string) => p.startsWith('/inventory') },
 ];
 
 // Profile card source of truth: Steam (name + avatar) when connected, else

@@ -11,7 +11,7 @@
 import { BrowserWindow, session, type Session } from 'electron';
 import { normalizeTitle } from '@app/shared';
 import { getStoreCacheTtlMs } from '../config';
-import { cached } from './cache';
+import { cached, TTL_STATIC_MS } from './cache';
 import { getRegions } from './regions';
 
 const GRAPHQL_URL = 'https://store.epicgames.com/graphql';
@@ -36,6 +36,8 @@ export interface EpicDetails {
   developer?: string | null;
   publisher?: string | null;
   genres: string[];
+  /** Store "feature" tags: Co-op, VR Support, Controller Support, … */
+  features: string[];
   platforms: string[];
   /** EGS community rating, 0–5 (RatingsPolls). */
   rating?: number | null;
@@ -264,6 +266,7 @@ function mapElement(el: any): EpicDetails {
     developer: el.developerDisplayName ?? el.seller?.name ?? null,
     publisher: el.publisherDisplayName ?? el.seller?.name ?? null,
     genres: byGroup('genre'),
+    features: byGroup('feature'),
     platforms: byGroup('platform'),
     rating: null, // filled separately (RatingsPolls)
     releaseDate: el.effectiveDate ? String(el.effectiveDate).slice(0, 10) : null,
@@ -349,6 +352,52 @@ export async function epicStoreDetails(
   } catch {
     return null; // transient (throttling etc.) — not cached, retried next visit
   }
+}
+
+// ---------- tags for the library index (EGS-only games have no Steam tags) ----------
+
+const epicTagsMem = new Map<string, string[]>();
+const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Tags already known in this process (the index reads these; nothing is fetched here). */
+export const epicTagsCached = (ns: string): string[] | undefined => epicTagsMem.get(ns);
+
+/** Genre + feature tags of an EGS offer, cached a week — one GraphQL call per game, ever. */
+export async function epicTags(ns: string, title: string): Promise<string[]> {
+  const hit = epicTagsMem.get(ns);
+  if (hit) return hit;
+  const tags = await cached(NS, `tags:${ns}`, 7 * TTL_STATIC_MS, async () => {
+    const d = await epicStoreDetails(title, ns, 'en');
+    return d ? [...new Set([...d.genres, ...d.features])] : [];
+  }).catch(() => [] as string[]);
+  epicTagsMem.set(ns, tags);
+  return tags;
+}
+
+let warming: Promise<void> | null = null;
+
+/**
+ * Fills the tag cache for many games in the background (3 in flight, a short
+ * pause between calls so the store is not hammered). Cached entries resolve
+ * instantly; only never-seen games cost a request.
+ */
+export function warmEpicTags(items: { ns: string; title: string }[]): Promise<void> {
+  if (warming) return warming;
+  const queue = items.filter((i) => !epicTagsMem.has(i.ns));
+  if (!queue.length) return Promise.resolve();
+  warming = (async () => {
+    const workers = Array.from({ length: 3 }, async () => {
+      while (queue.length) {
+        const it = queue.shift()!;
+        await epicTags(it.ns, it.title);
+        await pause(150);
+      }
+    });
+    await Promise.all(workers);
+  })().finally(() => {
+    warming = null;
+  });
+  return warming;
 }
 
 /** Resolves the offer; throws on transient failures so they aren't cached. */

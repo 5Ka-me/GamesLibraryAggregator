@@ -32,6 +32,30 @@ See the [root README](../README.md) for features, quick start and configuration.
     statistics). Up to 3 tool rounds per turn; every game it names is resolved against the real
     library/store before it becomes a card with actions. Also the "worth buying?" verdict on the game
     page (facts shown separately from the model's opinion). Key in the OS keystore (Settings → AI).
+    Games from the library, the wishlist or the store can be attached to the chat as context (the
+    "+" picker, up to 20) — e.g. pick 20 wishlist games and ask for similar ones in the store.
+  - `services/inventory.ts` — the signed-in user's Steam inventory, read-only (the Inventory tab).
+    The game list with item counts comes from the inventory page's `g_rgAppContextData` (one request);
+    items from `IEconService/GetInventoryItemsWithDescriptions` with the web session's access token (one
+    request per game, up to 2,000 items per page, CS2 wear/pattern via `get_asset_properties`), which has
+    its own rate limit, so all games load in seconds. Without a sign-in it falls back to
+    `steamcommunity.com/inventory`, spaced and paused on 429 (that endpoint blocks an IP for ~1.5 min
+    after ~10 quick requests). A copy is kept in `inventory.json` and refreshed when older than 6 h.
+    Market prices load per item on demand (`market/priceoverview`, in the wallet currency of the store
+    region, cached 24 h); trading-card set sizes come from each game's card page, one request every
+    6 s, cached a week. The assistant reads it through `inventory_overview` / `inventory_find`.
+  - `services/steamLauncher.ts` — every web link leaves the app through `openWebUrl`: Steam pages open
+    in the Steam client (`steam://openurl/…`), Epic store pages in the Epic Games Launcher
+    (`com.epicgames.launcher://store/…`) when it is installed, anything else in the browser.
+  - `services/collections.ts` — Steam-like collections over the merged library (`collections.json`):
+    built-in Favorites and Hidden, manual collections, dynamic ones (a saved filter in the same
+    language as the assistant's library tool, evaluated in `libraryIndex.ts`), and an import of the
+    Steam client's collections from `userdata/<id>/config/cloudstorage/cloud-storage-namespace-1.json`
+    (+ `.modified.json` overlay; parser in `steamCollections.ts`). A member is a game, not a store copy
+    (refs for every store + normalized title), so cross-store games are one member and new sources need
+    no migration. Steam-origin collections stay editable locally, show "edited" when they differ from
+    the Steam snapshot and can be reset; re-import merges Steam's changes and keeps local extras.
+    Hidden games leave the list, the reel, statistics and the assistant's tools.
   - `services/enrichment.ts` — one-off, button-driven "game profiles" for the whole library: length,
     genres, moods, themes, modes and a short summary per title (only titles are sent, the estimate
     and cost are shown before the run, batches are saved as they finish). Profiles feed the game page,

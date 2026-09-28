@@ -13,6 +13,7 @@ import {
 } from '@app/shared';
 import { ctl } from '../store/parts';
 import { TAG_CHIPS, chipMatches, profileFor, useProfiles, type TagChip } from '../hooks/useProfiles';
+import { useCollections } from '../hooks/useCollections';
 
 // "What to play?" — a slot-machine reel that picks a random library game.
 //
@@ -325,15 +326,17 @@ const RandomPage: React.FC = () => {
   const [chips, setChips] = useState<TagChip[]>([]);
   const profiles = useProfiles();
   const hasProfiles = Object.keys(profiles).length > 0;
+  const col = useCollections();
   const pool = useMemo(() => {
     const out = new Set(excluded);
     return games.filter(
       (g) =>
         !out.has(g.title) &&
+        !col.isHidden(g) &&
         (!installedOnly || !actions || isInstalled(g, actions)) &&
         (chips.length === 0 || chips.every((c) => chipMatches(c, profileFor(profiles, g))))
     );
-  }, [games, excluded, installedOnly, actions, chips, profiles]);
+  }, [games, excluded, installedOnly, actions, chips, profiles, col]);
 
   // Dress the idle reel as soon as the library arrives so it never shows blank faces.
   useEffect(() => {

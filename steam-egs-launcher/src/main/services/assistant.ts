@@ -1,12 +1,14 @@
 import { normalizeTitle } from '@app/shared';
 import { getChutesApiKey } from './secretStore';
-import { chatJson, parseJson, type ChatMessage } from './aiClient';
+import { DEFAULT_AI_MODEL, chatJson, modelForRole, modelRank, parseJson, type ChatMessage } from './aiClient';
+import { getAiModel } from '../config';
 import { getEntries, getSteamAccount } from './localData';
-import { GENRES, MODES, MOODS, getProfiles, matchProfile, type GameProfile, type Genre, type Mode, type Mood, type TagQuery } from './enrichment';
-import { appDetails, appReviewsFacts, findSteamAppId, itemsMeta, storeSearch, wishlistEntries, type GameDetails, type StoreItem } from './steamStore';
-import { steamAchievements, steamAchievementsProgress, type SteamAchievementProgress } from './steamSync';
-import { scanInstalledSteamAppIds } from './steamScan';
-import * as legendary from './legendary';
+import { GENRES, MODES, MOODS, getProfiles } from './enrichment';
+import { appDetails, appReviewsFacts, findSteamAppId, itemsMeta, storeBrowseByTags, storeSearch, wishlistEntries, type GameDetails, type StoreBrowseSort, type StoreItem } from './steamStore';
+import { steamAchievements } from './steamSync';
+import { applyFind, cleanTags, droppedTagValues, hours1, libraryView, needsProgress, slug, strList, tagsEmpty, type LibGame } from './libraryIndex';
+import { addTitles, collectionSummaries, hiddenTitleKeys } from './collections';
+import { inventoryToolFind, inventoryToolOverview } from './inventory';
 import { emit } from './events';
 
 // The "AI" page: a multi-turn assistant over the user's library, the Steam
@@ -34,6 +36,14 @@ export interface ChatTurn {
   role: 'user' | 'assistant';
   content: string;
 }
+
+/** A game the user attached to the conversation through the picker (title + where it came from). */
+export interface ContextGame {
+  title: string;
+  origin: 'library' | 'wishlist' | 'store';
+  appid: number | null;
+}
+export const CONTEXT_LIMIT = 20;
 
 export interface AssistantGame {
   title: string;
@@ -64,89 +74,43 @@ export interface AssistantProgress {
   phase: 'thinking' | 'tools' | 'answer';
   tools: string[];
   round: number;
+  /** The answer text decoded so far from the streamed JSON (only while the final answer is being written). */
+  partial?: string;
+  /** Set when the first model was busy or silent and another one is being tried. */
+  switchedTo?: string;
 }
 
-// ---------- local views of the library ----------
-
-interface LibGame {
-  key: string;
-  title: string;
-  sources: ('Steam' | 'Epic')[];
-  appid: number | null;
-  epicAppName: string | null;
-  iconUrl: string | null;
-  minutes: number;
-  minutes2w: number;
-  lastPlayedAt: string | null;
-  installed: boolean;
-  profile: GameProfile | null;
-  progress: SteamAchievementProgress | null;
-}
-
-async function installedSets(): Promise<{ steam: Set<string>; epic: Set<string> }> {
-  const [steam, epic] = await Promise.all([
-    Promise.resolve()
-      .then(() => scanInstalledSteamAppIds())
-      .catch(() => [] as string[]),
-    legendary.listInstalled().catch(() => []),
-  ]);
-  return { steam: new Set(steam.map(String)), epic: new Set(epic.map((g) => g.app_name)) };
-}
-
-/** The library as the tools see it: one row per title, both stores merged. */
-async function libraryView(withProgress: boolean): Promise<LibGame[]> {
-  const inst = await installedSets();
-  const profiles = getProfiles();
-  const byKey = new Map<string, LibGame>();
-  for (const e of getEntries()) {
-    const key = normalizeTitle(e.title);
-    if (!key) continue;
-    const g = byKey.get(key) ?? {
-      key,
-      title: e.title.trim(),
-      sources: [],
-      appid: null,
-      epicAppName: null,
-      iconUrl: null,
-      minutes: 0,
-      minutes2w: 0,
-      lastPlayedAt: null,
-      installed: false,
-      profile: profiles[key] ?? null,
-      progress: null,
-    };
-    if (!g.sources.includes(e.source)) g.sources.push(e.source);
-    g.iconUrl = g.iconUrl ?? e.iconUrl ?? null;
-    g.minutes += e.playtimeMinutes ?? 0;
-    g.minutes2w += e.playtime2WeeksMinutes ?? 0;
-    if (e.lastPlayedAt && (!g.lastPlayedAt || e.lastPlayedAt > g.lastPlayedAt)) g.lastPlayedAt = e.lastPlayedAt;
-    if (e.source === 'Steam') {
-      g.appid = g.appid ?? (Number(e.externalId) || null);
-      if (inst.steam.has(e.externalId)) g.installed = true;
-    } else {
-      g.epicAppName = g.epicAppName ?? e.appName ?? null;
-      if (e.appName && inst.epic.has(e.appName)) g.installed = true;
+/**
+ * Pulls the value of "answer" out of a JSON object that is still being
+ * streamed: decodes escapes up to the closing quote (or the end of what has
+ * arrived). null until the key shows up — tool rounds never produce one.
+ */
+function partialAnswer(text: string): string | null {
+  const m = /"answer"\s*:\s*"/.exec(text);
+  if (!m) return null;
+  const s = text.slice(m.index + m[0].length);
+  let out = '';
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === '"') break;
+    if (ch !== '\\') {
+      out += ch;
+      continue;
     }
-    byKey.set(key, g);
+    const n = s[i + 1];
+    if (n === undefined) break; // escape cut mid-way — wait for more
+    if (n === 'n') out += '\n';
+    else if (n === 't') out += '\t';
+    else if (n === 'u') {
+      const hex = s.slice(i + 2, i + 6);
+      if (hex.length < 4) break;
+      out += String.fromCharCode(parseInt(hex, 16));
+      i += 4;
+    } else out += n;
+    i++;
   }
-  const list = [...byKey.values()];
-  if (withProgress) {
-    const ids = list.map((g) => g.appid).filter((x): x is number => !!x);
-    const rows = await steamAchievementsProgress(ids).catch(() => [] as SteamAchievementProgress[]);
-    const byId = new Map(rows.map((r) => [r.appId, r]));
-    for (const g of list) if (g.appid) g.progress = byId.get(g.appid) ?? null;
-  }
-  return list;
+  return out;
 }
-
-type PlayedBucket = 'never' | '<1h' | '1-10h' | '10-50h' | '50h+';
-const playedBucket = (m: number): PlayedBucket => (m === 0 ? 'never' : m < 60 ? '<1h' : m < 600 ? '1-10h' : m < 3000 ? '10-50h' : '50h+');
-type AchBucket = 'none' | 'started' | 'half' | 'almost' | 'perfect';
-const achBucket = (p: SteamAchievementProgress | null): AchBucket | null =>
-  !p || p.total === 0 ? null : p.allUnlocked ? 'perfect' : p.percentage >= 80 ? 'almost' : p.percentage >= 40 ? 'half' : p.unlocked > 0 ? 'started' : 'none';
-const daysSince = (iso: string | null): number | null => (iso ? Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000) : null);
-
-const hours1 = (m: number): number => Math.round(m / 6) / 10;
 
 /** What a tool says about one game: per-game facts, no account data. */
 function describe(g: LibGame): Record<string, unknown> {
@@ -159,6 +123,7 @@ function describe(g: LibGame): Record<string, unknown> {
     ...(g.lastPlayedAt ? { lastPlayed: g.lastPlayedAt.slice(0, 10) } : {}),
     ...(g.minutes2w > 0 ? { hoursLast2Weeks: hours1(g.minutes2w) } : {}),
     ...(g.progress && g.progress.total > 0 ? { achievements: `${g.progress.unlocked}/${g.progress.total} (${g.progress.percentage}%)` } : {}),
+    ...(g.storeTags.length ? { steamTags: g.storeTags.slice(0, 6) } : {}),
     ...(p && p.known
       ? {
           length: p.endless ? 'endless' : p.lengthHours !== null ? `~${p.lengthHours}h` : null,
@@ -182,89 +147,6 @@ const toRef = (g: LibGame, note: string | null = null): AssistantGame => ({
 });
 
 // ---------- tools ----------
-
-interface FindArgs {
-  sources?: ('Steam' | 'EGS' | 'Epic')[];
-  installed?: boolean;
-  played?: PlayedBucket | 'any_played';
-  achievements?: AchBucket | 'has_any';
-  lastPlayed?: 'last_2_weeks' | 'last_90_days' | 'over_180_days_ago' | 'never';
-  titleContains?: string;
-  /** Exact titles to look up (follow-ups about games already mentioned). */
-  titles?: string[];
-  tags?: TagQuery;
-  sort?: 'playtime' | 'recent' | 'alpha' | 'random' | 'achievements';
-  limit?: number;
-}
-
-const strList = (v: unknown, max = 8): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').slice(0, max) : []);
-const slug = (s: string) => s.toLowerCase().trim().replace(/[\s-]+/g, '_');
-
-/** Only vocabulary values survive: a made-up slug matches nothing instead of "almost" matching. */
-function cleanTags(raw: unknown): TagQuery {
-  if (!raw || typeof raw !== 'object') return {};
-  const r = raw as Record<string, unknown>;
-  const genres = strList(r.genres).map(slug).filter((g): g is Genre => (GENRES as readonly string[]).includes(g));
-  const moods = strList(r.moods).map(slug).filter((m): m is Mood => (MOODS as readonly string[]).includes(m));
-  const modes = strList(r.modes).map(slug).filter((m): m is Mode => (MODES as readonly string[]).includes(m));
-  const themes = strList(r.themes, 3).map((t) => t.toLowerCase().slice(0, 40));
-  const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : undefined);
-  return {
-    ...(genres.length ? { genres } : {}),
-    ...(moods.length ? { moods } : {}),
-    ...(modes.length ? { modes } : {}),
-    ...(themes.length ? { themes } : {}),
-    ...(n(r.maxLengthHours) !== undefined ? { maxLengthHours: n(r.maxLengthHours) } : {}),
-    ...(n(r.minLengthHours) !== undefined ? { minLengthHours: n(r.minLengthHours) } : {}),
-  };
-}
-
-const tagsEmpty = (q: TagQuery) => !q.genres && !q.moods && !q.modes && !q.themes && q.maxLengthHours === undefined && q.minLengthHours === undefined;
-
-function applyFind(list: LibGame[], a: FindArgs): LibGame[] {
-  const sources = (a.sources ?? []).map((s) => (s === 'EGS' ? 'Epic' : s));
-  const tags = cleanTags(a.tags);
-  const q = a.titleContains?.toLowerCase().trim();
-  const wanted = Array.isArray(a.titles) ? new Set(a.titles.filter((x): x is string => typeof x === 'string').map(normalizeTitle)) : null;
-  let out = list.filter((g) => {
-    if (wanted && !wanted.has(g.key)) return false;
-    if (sources.length && !g.sources.some((s) => sources.includes(s))) return false;
-    if (a.installed !== undefined && g.installed !== a.installed) return false;
-    if (a.played === 'any_played' ? g.minutes === 0 : a.played && playedBucket(g.minutes) !== a.played) return false;
-    if (a.achievements) {
-      const b = achBucket(g.progress);
-      if (a.achievements === 'has_any' ? !b : b !== a.achievements) return false;
-    }
-    if (a.lastPlayed) {
-      const d = daysSince(g.lastPlayedAt);
-      if (a.lastPlayed === 'never' && (d !== null || g.minutes > 0)) return false;
-      if (a.lastPlayed === 'last_2_weeks' && (d === null || d > 14)) return false;
-      if (a.lastPlayed === 'last_90_days' && (d === null || d > 90)) return false;
-      if (a.lastPlayed === 'over_180_days_ago' && d !== null && d < 180) return false;
-    }
-    if (q && !g.title.toLowerCase().includes(q)) return false;
-    // Tag filters need a profile; games without one can't match (the model is told so).
-    if (!tagsEmpty(tags) && !(g.profile && g.profile.known && matchProfile(g.profile, tags))) return false;
-    return true;
-  });
-  switch (a.sort) {
-    case 'recent':
-      out.sort((x, y) => (y.lastPlayedAt ?? '').localeCompare(x.lastPlayedAt ?? ''));
-      break;
-    case 'alpha':
-      out.sort((x, y) => x.title.localeCompare(y.title));
-      break;
-    case 'achievements':
-      out.sort((x, y) => (y.progress?.percentage ?? -1) - (x.progress?.percentage ?? -1));
-      break;
-    case 'random':
-      out = out.map((g) => [Math.random(), g] as const).sort((x, y) => x[0] - y[0]).map(([, g]) => g);
-      break;
-    default:
-      out.sort((x, y) => y.minutes - x.minutes);
-  }
-  return out;
-}
 
 async function storeItemsFor(appids: number[], lang: string): Promise<StoreItem[]> {
   if (!appids.length) return [];
@@ -363,12 +245,20 @@ interface ToolRun {
 /* eslint-disable @typescript-eslint/no-explicit-any */
 async function runTool(name: string, args: any, lang: string): Promise<ToolRun> {
   const a = args && typeof args === 'object' ? args : {};
+  if (process.env.LAUNCHER_AI_DEBUG) console.log(`[ai] tool ${name} ${JSON.stringify(a).slice(0, 400)}`);
   const run: ToolRun = { name, result: null, libraryHits: [], storeIds: [] };
   switch (name) {
     case 'library_find':
     case 'random_pick': {
-      const needsProgress = !!a.achievements || a.sort === 'achievements';
-      const lib = await libraryView(needsProgress);
+      // A made-up vocabulary value must not degrade into "every game": say what was wrong instead.
+      const dropped = droppedTagValues(a.tags);
+      if (dropped.length) {
+        run.result = { error: `unknown tag values: ${dropped.join(', ')}. genres/moods/modes accept only the listed vocabulary; for Steam user tags such as "VR", "Anime" or "Pixel Graphics" use steamTags: [...]`, items: [] };
+        return run;
+      }
+      // Hidden games stay out of the tools' view, like they stay out of the library list.
+      const hidden = await hiddenTitleKeys();
+      const lib = (await libraryView(needsProgress(a), true)).filter((g) => !hidden.has(g.key));
       const found = applyFind(lib, { ...a, ...(name === 'random_pick' ? { sort: 'random' } : {}) });
       const limit = Math.min(MAX_LIST, Math.max(1, Number(a.limit) || (name === 'random_pick' ? 3 : 25)));
       const shown = found.slice(0, limit);
@@ -383,7 +273,7 @@ async function runTool(name: string, args: any, lang: string): Promise<ToolRun> 
       return run;
     }
     case 'game_profile': {
-      const lib = await libraryView(true);
+      const lib = await libraryView(true, true);
       const key = normalizeTitle(String(a.title ?? ''));
       const g = lib.find((x) => x.key === key) ?? lib.find((x) => x.key.includes(key) || key.includes(x.key));
       if (!g) {
@@ -412,6 +302,28 @@ async function runTool(name: string, args: any, lang: string): Promise<ToolRun> 
       run.result = { items: list.map((it) => describeStore(it, ownedKeys, ownedIds)) };
       return run;
     }
+    case 'store_browse': {
+      const tags = strList(a.tags, 6);
+      if (!tags.length) {
+        run.result = { error: 'tags are required (Steam tag names, e.g. ["Anime","Roguelike"])' };
+        return run;
+      }
+      const sort: StoreBrowseSort = a.sort === 'reviews' || a.sort === 'new' || a.sort === 'price' ? a.sort : 'relevance';
+      const r = await storeBrowseByTags(tags, lang, { onSaleOnly: !!a.onSaleOnly, sort, limit: Math.min(20, Math.max(1, Number(a.limit) || 12)) });
+      const lib = await libraryView(false);
+      const ownedKeys = new Set(lib.map((g) => g.key));
+      const ownedIds = new Set(lib.map((g) => g.appid).filter((x): x is number => !!x));
+      let list = r.items;
+      if (a.excludeOwned !== false) list = list.filter((it) => !ownedIds.has(it.appid) && !ownedKeys.has(normalizeTitle(it.name)));
+      run.storeIds = list.map((it) => it.appid);
+      run.result = {
+        tagsUsed: r.tags,
+        ...(r.unknownTags.length ? { unknownTags: r.unknownTags, hint: 'use exact Steam tag names; nothing was filtered by the unknown ones' } : {}),
+        total: list.length,
+        items: list.map((it) => describeStore(it, ownedKeys, ownedIds)),
+      };
+      return run;
+    }
     case 'store_game_info': {
       let appid = Number(a.appid) || null;
       if (!appid && a.title) appid = await findSteamAppId(String(a.title), lang).catch(() => null);
@@ -423,6 +335,33 @@ async function runTool(name: string, args: any, lang: string): Promise<ToolRun> 
       const f = await gameFacts(appid, lang, true);
       run.storeIds = [appid];
       run.result = f;
+      return run;
+    }
+    case 'collections_list': {
+      run.result = { collections: await collectionSummaries() };
+      return run;
+    }
+    case 'collection_add': {
+      const name = String(a.name ?? '').trim().slice(0, 60);
+      const titles = strList(a.titles, 40);
+      if (!name || !titles.length) {
+        run.result = { error: 'name and titles are required' };
+        return run;
+      }
+      const r = await addTitles(name, titles, a.create !== false);
+      if (r.collection) {
+        const lib = await libraryView(false);
+        run.libraryHits = lib.filter((g) => r.added.some((t) => normalizeTitle(t) === g.key));
+      }
+      run.result = { collection: r.collection?.name ?? null, added: r.added, alreadyIn: r.alreadyIn, notFound: r.notFound };
+      return run;
+    }
+    case 'inventory_overview': {
+      run.result = await inventoryToolOverview(lang);
+      return run;
+    }
+    case 'inventory_find': {
+      run.result = await inventoryToolFind(a, lang);
       return run;
     }
     case 'wishlist': {
@@ -479,44 +418,79 @@ async function runTool(name: string, args: any, lang: string): Promise<ToolRun> 
 
 // ---------- prompt ----------
 
-const SYSTEM = `You are the assistant inside a desktop game-library app (Steam + Epic Games Store). You help the user decide what to play, what to finish or drop, what to buy, and you answer questions about their library. You cannot see the user's data directly: you call TOOLS, the app runs them locally and returns games with facts (hours, last played, achievements, installed, AI profiles). For totals ("how many hours in all"), fetch with library_find sort "playtime", limit 40, and say the sum covers the listed games. Ground every claim in tool results; never invent what the user owns or played.
+const SYSTEM = `You are the assistant inside a desktop game-library manager (Steam + Epic Games Store). You help the user pick what to play, finish or drop, decide what to buy, and answer questions about their library — always from tool results, never from assumptions about what they own or played.
 
-TOOLS (call with {"calls":[{"tool":name,"args":{...}}]}, up to ${MAX_CALLS_PER_ROUND} per round, ${MAX_ROUNDS} rounds max):
-- library_find {sources?: ["Steam"|"EGS"], installed?: bool, played?: "never"|"<1h"|"1-10h"|"10-50h"|"50h+"|"any_played", achievements?: "none"|"started"|"half"|"almost"|"perfect"|"has_any", lastPlayed?: "last_2_weeks"|"last_90_days"|"over_180_days_ago"|"never", titleContains?: string, titles?: [exact titles — for follow-ups about games already listed, ONE call], tags?: {genres?: [..], moods?: [..], modes?: [..], themes?: [..], maxLengthHours?: n, minLengthHours?: n}, sort?: "playtime"|"recent"|"alpha"|"random"|"achievements", limit?: n≤${MAX_LIST}} → owned games matching ALL given conditions, with facts: hours played, last played date, hours in the last 2 weeks, achievements unlocked/total, installed, AI profile (length/genres/moods/modes).
-- random_pick {same filters, limit?: n} → a few random owned games from the filtered pool.
-- game_profile {title} → the AI profile + facts of ONE owned game (summary, themes, length, modes, hours, last played, achievements).
-- store_search {query, onSaleOnly?: bool, limit?: n} → Steam store games by NAME (title fragments and franchises work; genre words do not), with price, discount, review score, owned flag.
-- store_game_info {title | appid} → full store facts for one game: price, discount, release, genres, tags, metacritic, review score + positive %, RECENT (30-day sample) reviews %, current players, a few review snippets, similar games the user already owns.
-- wishlist {onSaleOnly?: bool} → the user's Steam wishlist with prices and discounts.
-- achievements {title} → progress and the remaining achievements of one owned Steam game, easiest first.
+# How you see data
+You have no direct access. You call TOOLS; the app runs them locally and returns facts. One turn = up to ${MAX_ROUNDS} tool rounds of up to ${MAX_CALLS_PER_ROUND} calls each, then a final answer.
 
-Tag vocabularies for library_find.tags — use ONLY these values:
+# Tools
+- library_find {sources?: ["Steam"|"EGS"], installed?: bool, played?: "never"|"<1h"|"1-10h"|"10-50h"|"50h+"|"any_played", achievements?: "none"|"started"|"half"|"almost"|"perfect"|"has_any", lastPlayed?: "last_2_weeks"|"last_90_days"|"over_180_days_ago"|"never", titleContains?: string, titles?: [exact titles], tags?: {genres?, moods?, modes?, themes?, maxLengthHours?, minLengthHours?}, steamTags?: ["VR", "Anime", …], sort?: "playtime"|"recent"|"alpha"|"random"|"achievements", limit?: n≤${MAX_LIST}} → owned games matching ALL conditions, each with: stores, installed, hours played, last played, hours last 2 weeks, achievements, store tags (Steam user tags; EGS genre/feature tags for Epic-only games), AI profile (length, genres, moods, modes).
+- random_pick {same filters, limit?} → random owned games from the filtered pool.
+- game_profile {title} → one owned game: AI profile (summary, themes, length, modes) + the same facts.
+- store_search {query, onSaleOnly?, limit?} → Steam store games by NAME (titles and franchises work, genre words do not): price, discount, owned flag.
+- store_browse {tags: [Steam tag names, e.g. "Anime","Roguelike","Sexual Content","Co-op","VR"], onSaleOnly?, sort?: "relevance"|"reviews"|"new"|"price", limit?≤20, excludeOwned?: bool (default true)} → Steam store games carrying ALL the tags, with price, discount and owned flag. THE tool for "find <kind of game> in the store" (genre, theme, feature, art style); store_search is for names only.
+- store_game_info {title | appid} → one store game: price, discount, release, genres, tags, Metacritic, all-time review % and count, 30-day review sample %, current players, review snippets, similar games the user owns (with hours).
+- wishlist {onSaleOnly?} → the user's Steam wishlist with prices and discounts.
+- achievements {title} → progress and remaining achievements of one owned Steam game, easiest first.
+- inventory_overview {} → the user's Steam inventory per game: item counts, tradable and marketable counts.
+- inventory_find {game?: name or appid, query?: text in name/type/description, tags?: [tag values that must all match, e.g. "Arcana", "Covert", "Factory New", "Foil", "Pudge"], tradable?: bool, marketable?: bool, sort?: "rarity"|"price"|"name"|"quantity"|"newest", withPrices?: bool (loads Steam Market prices for up to 10 items), limit?: n≤40} → the user's items, identical ones stacked: game, type, rarity, quality, exterior, quantity, tradable, marketable, trade hold, price when known, main tags.
+- collections_list {} → the user's collections (name, kind, count, sample titles).
+- collection_add {name, titles: [exact titles from tool results], create?: bool} → adds owned games to a manual collection (creates it unless create is false). Use when asked to collect, group, save or "make a collection".
+
+# Vocabularies (library_find.tags — ONLY these values; anything else is rejected, not ignored)
 GENRES: {{genres}}
 MOODS: {{moods}}
 MODES: {{modes}}
+Concepts outside them (VR, anime, pixel graphics, souls-like, deckbuilder, roguelike …) → steamTags. Official platform flags are tags too: "Steam Deck Verified" / "Steam Deck Playable", "VR Supported" / "VR Only" (prefer these over the user tag "VR", which also marks games with an optional VR mode). Themes (setting/topic: zombies, space, cats) → tags.themes, lowercase English.
 
-HOW TO WORK
-- Think about what data answers the question, call the needed tools (several at once when independent), then answer. Follow-up about games you already listed ("which of those are installed?") = ONE library_find with titles: [...], never one call per game. Prefer tags over guessing: "cozy" → moods ["cozy","relaxing"]; "short" → maxLengthHours 6; "co-op" → modes ["coop_local","coop_online"]; "what to finish" → achievements "almost" or played "10-50h" + lastPlayed "over_180_days_ago".
-- "Is X worth buying": call store_game_info, then weigh: overall vs RECENT review %, review count, price and discount, current players (dead multiplayer = risk), release date, and whether the user already owns similar games (from similarOwned) they never played. Give a clear verdict: buy now / wait for a sale / skip / you already own similar unplayed games.
-- Recommend 2–5 concrete games with a one-line reason each, not long lists, unless the user asks for a list. Titles must come from tool results (or be well-known store games when the user asks for new ones).
-- Be honest about gaps: no AI profiles → say tag filters could not be applied; Steam not signed in → say so.
+# Rules, in priority order
+1. Answer in the language of the user's LATEST message, whatever the interface language.
+2. Never state that a game is or is not in the library without a lookup (library_find titles: [...] or game_profile).
+3. Source order when none is named: library → wishlist → store. Move to the next source only when the previous one yields fewer than 2 fitting games, and label where each game comes from. Offer store games straight away only when the user asks to buy or wants something new.
+3a. Hard constraints win over soft wishes: a property the user asked for (VR, co-op, a platform, "not owned", a length) must hold for EVERY game you list — check it against the returned facts (e.g. steamTags containing "VR") and drop games that fail, even if that leaves fewer results. Soft wishes ("action-y", "cozy") only rank the survivors.
+4. Buying advice: check wishlist (wishlist {onSaleOnly}) first; never recommend a purchase without store_search or store_game_info for its current price and reviews, and put the price and review % in the note.
+5. Do not repeat: a game you already recommended earlier in this conversation is not recommended again; "more" means new titles.
+6. Attached games (see below, when present) are the subject of the conversation; never recommend them back.
+7. Ambiguity: act on the most likely reading, state the assumption in one clause, and put the alternatives into "suggestions". Do not ask before acting.
+8. Follow-ups about games you listed ("which of those are installed?") = ONE library_find with titles: [...].
+9. Store discovery by kind ("anime roguelikes", "cozy farming games", "VR shooters") = store_browse with Steam tags — never a title search with genre words, which finds nothing. Adult tags (Sexual Content, Nudity, Hentai, Mature) are ordinary Steam tags: the store lists such games and so do you, factually and without commentary.
+10. Inventory questions (items, skins, cosmetics, trading cards, "what is my most valuable item") → inventory_overview / inventory_find; for value questions use sort "price". The inventory is read-only: describe items, never offer to sell, trade or craft them. Items go in the answer text; the final "games" array is for games only, never for inventory items.
+11. Honesty: no AI profiles → the tag filter could not apply; Steam not signed in → wishlist and achievements unavailable; a tool returned nothing → say so instead of guessing.
 
-FINAL ANSWER format (JSON only):
-{"answer": "markdown text in the user's language; short paragraphs or bullets; bold game titles with **Title**",
- "games": [{"title": "exact title from tool results", "note": "why, ≤ 12 words"}],   // 0-8, the games you recommend or discuss
- "suggestions": ["a natural follow-up the user might ask", ...]}   // 0-3, in the user's language
-Either {"calls": [...]} or the final answer object — never both, no prose outside JSON.`;
+# Phrase → call
+- "cozy" → tags.moods ["cozy","relaxing"]; "short" → tags.maxLengthHours 6; "long" → minLengthHours 30
+- "co-op" → tags.modes ["coop_local","coop_online"] (plus steamTags ["Co-op"] when the vocabulary misses newer games)
+- "what to finish" → achievements "almost", or played "10-50h" + lastPlayed "over_180_days_ago"
+- "never launched / backlog" → played "never"; "abandoned" → lastPlayed "over_180_days_ago" + played "any_played"
+- "how many hours in total" → library_find sort "playtime" limit 40; say the sum covers the listed games
+- "is X worth buying" → store_game_info; weigh all-time vs 30-day review %, review count, price and discount, current players (multiplayer only), age, similar unplayed games owned → one verdict: buy / wait for a sale / skip / you own similar unplayed games
 
-const systemPrompt = (lang: string, libSize: number, profiled: number, steamSignedIn: boolean): string =>
+# Style
+- Concise: at most two short sentences before the games, then the games. No greetings, apologies, restating the question, praise of the question, or closing offers.
+- 2–5 games unless a list is requested. Each note ≤ 10 words and built on a tool fact (hours, tag, price, review %).
+- Markdown: **bold titles**, bullets when listing; no headers, no tables.
+- Every number comes from a tool result.
+
+# Output — JSON only, nothing outside it
+Tool round: {"calls":[{"tool":"…","args":{…}}]}
+Final: {"answer":"…", "games":[{"title":"exact title from tool results","note":"≤ 10 words, fact-based"}], "suggestions":["follow-up in the user's language", …]}
+"games": 0–8 (the games you recommend or discuss); "suggestions": 0–3. Never both shapes at once.`;
+
+const systemPrompt = (lang: string, libSize: number, profiled: number, steamSignedIn: boolean, context: ContextGame[]): string =>
   SYSTEM.replace('{{genres}}', GENRES.join(', ')).replace('{{moods}}', MOODS.join(', ')).replace('{{modes}}', MODES.join(', ')) +
-  `\n\nContext: user language ${lang === 'ru' ? 'Russian' : 'English'}; today ${new Date().toISOString().slice(0, 10)}; library ≈ ${libSize} games, ${profiled} of them with AI profiles; Steam ${steamSignedIn ? 'signed in' : 'NOT signed in (wishlist/achievements unavailable)'}.`;
+  `\n\nContext: user language ${lang === 'ru' ? 'Russian' : 'English'}; today ${new Date().toISOString().slice(0, 10)}; library ≈ ${libSize} games, ${profiled} of them with AI profiles; Steam ${steamSignedIn ? 'signed in' : 'NOT signed in (wishlist/achievements unavailable)'}.` +
+  (context.length
+    ? `\n\nATTACHED GAMES — the user picked these as the subject of the conversation ("these", "them", "similar to these" refer to this list):\n` +
+      context.map((g) => `- ${g.title} (${g.origin === 'library' ? 'in their library' : g.origin === 'wishlist' ? 'on their Steam wishlist' : 'from the Steam store, not owned'})`).join('\n') +
+      `\nUse them as given; call game_profile/store_game_info only when you need facts about them. For "games like these", reason about what the attached games share (genre, mood, mechanics), propose concrete titles from your knowledge, then verify them with store_search / library_find so every recommendation is real. Exclude the attached games themselves from recommendations.`
+    : '');
 
 const trim = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s);
 const compact = (v: unknown, max = 9000): string => trim(JSON.stringify(v), max);
 
 // ---------- the turn ----------
 
-export async function assistantChat(history: ChatTurn[], lang: string): Promise<AssistantReply> {
+export async function assistantChat(history: ChatTurn[], lang: string, context: ContextGame[] = []): Promise<AssistantReply> {
   if (!getChutesApiKey()) throw new Error('AI_NO_KEY');
   const turns = history
     .filter((t) => t && (t.role === 'user' || t.role === 'assistant') && typeof t.content === 'string' && t.content.trim())
@@ -526,7 +500,7 @@ export async function assistantChat(history: ChatTurn[], lang: string): Promise<
 
   const libKeys = new Set(getEntries().map((e) => normalizeTitle(e.title)).filter(Boolean));
   const profiled = Object.values(getProfiles()).filter((p) => p.known).length;
-  const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt(lang, libKeys.size, profiled, !!getSteamAccount().steamId) }, ...turns];
+  const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt(lang, libKeys.size, profiled, !!getSteamAccount().steamId, context.slice(0, CONTEXT_LIMIT)) }, ...turns];
 
   let promptTokens = 0;
   let completionTokens = 0;
@@ -535,25 +509,62 @@ export async function assistantChat(history: ChatTurn[], lang: string): Promise<
   const libraryHits = new Map<string, LibGame>();
   const storeIds = new Set<number>();
   let final: any = null;
+  let corrected = false;
+
+  // Advice is where model quality shows. Tool rounds run on the user's (cheap)
+  // model; once facts are in, an advisory turn continues on the "smart" model —
+  // unless the user already picked something at least as capable.
+  const lastUser = turns[turns.length - 1].content;
+  const advisory = /посовет|рекоменд|похож|поиграть|стоит ли|купить|пройти|recommend|suggest|similar|worth|what (should|to) play|buy|like these|for tonight|вечер/i.test(lastUser);
+  const smart = modelForRole('smart');
+  const chosen = getAiModel() ?? DEFAULT_AI_MODEL;
+  const escalateTo = advisory && smart && modelRank(chosen) < modelRank(smart) ? smart : undefined;
 
   for (let round = 0; round <= MAX_ROUNDS; round++) {
     emit('ai:progress', { phase: round === 0 ? 'thinking' : 'answer', tools: toolsUsed, round } satisfies AssistantProgress);
     const forced = round === MAX_ROUNDS;
     const msgs: ChatMessage[] = forced ? [...messages, { role: 'user', content: 'Tool budget exhausted — answer now with what you have, JSON final answer only.' }] : messages;
-    const res = await chatJson(msgs, ANSWER_MAX_TOKENS);
+    // Stream every round: a tool round yields nothing visible, the final one paints the answer as it is written.
+    let lastEmit = 0;
+    const res = await chatJson(msgs, ANSWER_MAX_TOKENS, {
+      model: toolsUsed.length > 0 ? escalateTo : undefined,
+      onAttempt: (m, attempt) => {
+        if (attempt > 0) emit('ai:progress', { phase: 'thinking', tools: toolsUsed, round, switchedTo: m } satisfies AssistantProgress);
+      },
+      onDelta: (soFar) => {
+        const now = Date.now();
+        if (now - lastEmit < 80) return;
+        const partial = partialAnswer(soFar);
+        if (partial === null) return;
+        lastEmit = now;
+        emit('ai:progress', { phase: 'answer', tools: toolsUsed, round, partial } satisfies AssistantProgress);
+      },
+    });
     promptTokens += res.promptTokens;
     completionTokens += res.completionTokens;
     model = res.model;
     const parsed = parseJson(res.text);
+    if (process.env.LAUNCHER_AI_DEBUG) console.log(`[ai] ${res.model} round ${round}: ${res.text.replace(/\s+/g, ' ').slice(0, 300)}`);
     const calls: any[] = !forced && Array.isArray(parsed?.calls) ? parsed.calls.slice(0, MAX_CALLS_PER_ROUND) : [];
     if (!calls.length) {
-      final = parsed ?? { answer: res.text };
+      const hasAnswer = typeof parsed?.answer === 'string' && parsed.answer.trim().length > 0;
+      // A reply with neither calls nor an answer (a model that ignored the contract, a truncated
+      // thought) gets one correction round instead of surfacing as an empty bubble.
+      if (!hasAnswer && !forced && !corrected) {
+        corrected = true;
+        messages.push({ role: 'assistant', content: res.text.slice(0, 2000) });
+        messages.push({ role: 'user', content: 'That reply did not follow the contract. Reply with JSON only: either {"calls":[...]} to use tools, or the final answer object with a non-empty "answer" in the language of the user.' });
+        continue;
+      }
+      final = hasAnswer || !parsed ? (parsed ?? { answer: res.text }) : { ...parsed, answer: typeof parsed.answer === 'string' ? parsed.answer : res.text };
       break;
     }
     const names = calls.map((c) => String(c?.tool ?? '')).filter(Boolean);
     for (const n of names) if (!toolsUsed.includes(n)) toolsUsed.push(n);
     emit('ai:progress', { phase: 'tools', tools: names, round } satisfies AssistantProgress);
-    const runs = await Promise.all(calls.map((c) => runTool(String(c?.tool ?? ''), c?.args, lang).catch((e) => ({ name: String(c?.tool), result: { error: e instanceof Error ? e.message : String(e) }, libraryHits: [], storeIds: [] }) as ToolRun)));
+    // Small models sometimes flatten {"tool","args":{…}} into {"tool", …args}; accept both shapes.
+    const argsOf = (c: any): unknown => (c && typeof c === 'object' && c.args && typeof c.args === 'object' ? c.args : c && typeof c === 'object' ? Object.fromEntries(Object.entries(c).filter(([k]) => k !== 'tool')) : {});
+    const runs = await Promise.all(calls.map((c) => runTool(String(c?.tool ?? ''), argsOf(c), lang).catch((e) => ({ name: String(c?.tool), result: { error: e instanceof Error ? e.message : String(e) }, libraryHits: [], storeIds: [] }) as ToolRun)));
     for (const r of runs) {
       for (const g of r.libraryHits) libraryHits.set(g.key, g);
       for (const id of r.storeIds) storeIds.add(id);
@@ -616,7 +627,7 @@ export interface GameVerdict {
   at: string;
 }
 
-const VERDICT_SYSTEM = `You judge whether a Steam game is worth buying for one specific user, from the FACTS given (store data + which similar games the user already owns and how much they played them). Do not invent facts. Address the user directly as "you"; never say "the user". Weigh: overall review % vs recent 30-day % (declining recent = risk, improving = good sign), review volume, price and discount (a deep discount tilts toward "buy", full price toward "wait"), current players (matters for multiplayer only), age. Similar owned-but-unplayed games are a secondary factor: mention them as a note; choose "own_similar" only when they are close substitutes (same genre AND similar mood) and the game itself is not clearly superior. If the user already owns the game, verdict is "already_owned" and the summary says whether it is worth playing now. Output JSON only:
+const VERDICT_SYSTEM = `You judge whether a Steam game is worth buying for one specific user, from the FACTS given (store data + which similar games the user already owns and how much they played them). Do not invent facts. Address the user directly as "you"; never say "the user". Be concise and concrete: no filler, no hedging phrases, every claim traceable to a fact given. Weigh: overall review % vs recent 30-day % (declining recent = risk, improving = good sign), review volume, price and discount (a deep discount tilts toward "buy", full price toward "wait"), current players (matters for multiplayer only), age. Similar owned-but-unplayed games are a secondary factor: mention them as a note; choose "own_similar" only when they are close substitutes (same genre AND similar mood) and the game itself is not clearly superior. If the user already owns the game, verdict is "already_owned" and the summary says whether it is worth playing now. Output JSON only:
 {"verdict": "buy"|"wait_for_sale"|"skip"|"own_similar"|"already_owned",
  "score": 1-10,
  "summary": "2-3 sentences in {{language}}, concrete, neutral",

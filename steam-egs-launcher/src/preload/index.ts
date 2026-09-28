@@ -21,10 +21,17 @@ import type {
 export type { SectionSort, StoreSection };
 import type { EpicDetails } from '../main/services/epicStore';
 import type { AiModelInfo, AiStatus } from '../main/services/aiClient';
-import type { AssistantGame, AssistantProgress, AssistantReply, ChatTurn, GameFacts, GameVerdict } from '../main/services/assistant';
+import type { AssistantGame, AssistantProgress, AssistantReply, ChatTurn, ContextGame, GameFacts, GameVerdict } from '../main/services/assistant';
 import type { EnrichProgress, EnrichStatus, GameProfile, TagQuery } from '../main/services/enrichment';
+import type { Collection, CollectionKind, CollectionOrigin, CollectionRule, GameHandle, ResolvedCollection, SteamImportResult } from '../main/services/collections';
+import type { GameRef } from '../main/services/libraryIndex';
+import type { CardSet, CardSetsState, InvApp, InvAppData, InvAppState, InvAsset, InvChange, InvClass, InvLine, InvOverview, InvPrice, InvTag } from '../main/services/inventory';
 
-export type { AiModelInfo, AiStatus, AssistantGame, AssistantProgress, AssistantReply, ChatTurn, GameFacts, GameVerdict, EnrichProgress, EnrichStatus, GameProfile, TagQuery };
+export type { CardSet, CardSetsState, InvApp, InvAppData, InvAppState, InvAsset, InvChange, InvClass, InvLine, InvOverview, InvPrice, InvTag };
+
+export type { Collection, CollectionKind, CollectionOrigin, CollectionRule, GameHandle, GameRef, ResolvedCollection, SteamImportResult };
+
+export type { AiModelInfo, AiStatus, AssistantGame, AssistantProgress, AssistantReply, ChatTurn, ContextGame, GameFacts, GameVerdict, EnrichProgress, EnrichStatus, GameProfile, TagQuery };
 
 export type { EpicDetails, GameDetails, StoreHome, StoreItem, StoreSectionPage, WishlistEntry, WishlistItem };
 
@@ -61,7 +68,7 @@ const launcher = {
   aiSetModel: (model: string): Promise<AiStatus> => ipcRenderer.invoke('ai:setModel', model),
   aiListModels: (): Promise<AiModelInfo[]> => ipcRenderer.invoke('ai:models'),
   /** One assistant turn: the whole visible thread goes in, the model's answer + resolved game cards come out. */
-  aiChat: (history: ChatTurn[], lang: string): Promise<AssistantReply> => ipcRenderer.invoke('ai:chat', history, lang),
+  aiChat: (history: ChatTurn[], lang: string, context?: ContextGame[]): Promise<AssistantReply> => ipcRenderer.invoke('ai:chat', history, lang, context ?? []),
   /** "Worth buying?" analysis for one Steam store game (paid call; cached for an hour). */
   aiVerdict: (appid: number, lang: string, force?: boolean): Promise<GameVerdict> => ipcRenderer.invoke('ai:verdict', appid, lang, force ?? false),
   onAiProgress: (cb: (p: AssistantProgress) => void): (() => void) => {
@@ -76,6 +83,23 @@ const launcher = {
   enrichStart: (lang: string, redoOtherLang?: boolean): Promise<EnrichStatus> => ipcRenderer.invoke('enrich:start', lang, redoOtherLang ?? false),
   enrichCancel: (): Promise<void> => ipcRenderer.invoke('enrich:cancel'),
   enrichClear: (lang: string): Promise<EnrichStatus> => ipcRenderer.invoke('enrich:clear', lang),
+  // Collections (Steam-like): built-ins favorite/hidden, manual and dynamic user collections, Steam import.
+  collectionsList: (): Promise<Collection[]> => ipcRenderer.invoke('collections:list'),
+  collectionsResolve: (): Promise<ResolvedCollection[]> => ipcRenderer.invoke('collections:resolve'),
+  collectionsPreview: (rule: CollectionRule): Promise<number> => ipcRenderer.invoke('collections:preview', rule),
+  collectionsCreate: (input: { name: string; kind: CollectionKind; rule?: CollectionRule }): Promise<Collection> => ipcRenderer.invoke('collections:create', input),
+  collectionsUpdate: (id: string, patch: { name?: string; kind?: CollectionKind; rule?: CollectionRule; order?: number }): Promise<Collection> => ipcRenderer.invoke('collections:update', id, patch),
+  collectionsDelete: (id: string): Promise<void> => ipcRenderer.invoke('collections:delete', id),
+  collectionsReorder: (ids: string[]): Promise<void> => ipcRenderer.invoke('collections:reorder', ids),
+  collectionsSetMembership: (id: string, handle: GameHandle, member: boolean): Promise<void> => ipcRenderer.invoke('collections:setMembership', id, handle, member),
+  collectionsMembership: (handle: GameHandle): Promise<string[]> => ipcRenderer.invoke('collections:membership', handle),
+  collectionsImportSteam: (): Promise<SteamImportResult> => ipcRenderer.invoke('collections:importSteam'),
+  collectionsResetSteam: (id: string): Promise<void> => ipcRenderer.invoke('collections:resetSteam', id),
+  onCollectionsChanged: (cb: () => void): (() => void) => {
+    const listener = () => cb();
+    ipcRenderer.on('collections:changed', listener);
+    return () => ipcRenderer.removeListener('collections:changed', listener);
+  },
   onEnrichProgress: (cb: (p: EnrichProgress) => void): (() => void) => {
     const listener = (_e: unknown, payload: EnrichProgress) => cb(payload);
     ipcRenderer.on('enrich:progress', listener);
@@ -179,6 +203,18 @@ const launcher = {
   },
 
   /** Fires after a background library autosync — refetch the library. */
+  // Steam inventory (read-only): game list + loading state, one game's items,
+  // Market prices on demand, trading-card set sizes; `inventory:changed` streams progress.
+  inventoryOverview: (lang: string, force?: boolean): Promise<InvOverview> => ipcRenderer.invoke('inventory:overview', lang, force ?? false),
+  inventoryApp: (appid: number, lang: string): Promise<InvAppState> => ipcRenderer.invoke('inventory:app', appid, lang),
+  inventoryPrice: (appid: number, hashName: string, force?: boolean): Promise<InvPrice> => ipcRenderer.invoke('inventory:price', appid, hashName, force ?? false),
+  inventoryPrices: (): Promise<Record<string, InvPrice>> => ipcRenderer.invoke('inventory:prices'),
+  inventoryCardSets: (lang: string): Promise<CardSetsState> => ipcRenderer.invoke('inventory:cardSets', lang),
+  onInventoryChanged: (cb: (e: InvChange) => void): (() => void) => {
+    const listener = (_e: unknown, payload: InvChange) => cb(payload);
+    ipcRenderer.on('inventory:changed', listener);
+    return () => ipcRenderer.removeListener('inventory:changed', listener);
+  },
   onLibraryChanged: (cb: () => void): (() => void) => {
     const listener = () => cb();
     ipcRenderer.on('library:changed', listener);

@@ -10,7 +10,8 @@ import {
 } from '@app/shared';
 import { getLibraryView, LIBRARY_VIEW_KEY, type LibraryView } from './LibraryPage';
 import { useLegendary } from '../legendary/LegendaryProvider';
-import type { AiModelInfo, AiStatus, EnrichProgress, EnrichStatus, UpdateState } from '../../../preload';
+import type { AiModelInfo, AiStatus, EnrichProgress, EnrichStatus, SteamImportResult, UpdateState } from '../../../preload';
+import { useCollections } from '../hooks/useCollections';
 
 const card: React.CSSProperties = {
   border: '1px solid var(--border)',
@@ -383,6 +384,46 @@ const InstallPathPanel: React.FC = () => {
   );
 };
 
+// ---- Collections: overview + import from the Steam client ----
+const CollectionsPanel: React.FC = () => {
+  const { t } = useI18n();
+  const col = useCollections();
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<SteamImportResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const steamCount = col.custom.filter((c) => c.origin === 'steam').length;
+  const run = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      setResult(await window.launcher.collectionsImportSteam());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div style={card}>
+      <h3 style={{ marginTop: 0 }}>{t('col.settings.title')}</h3>
+      <p style={{ margin: '4px 0 10px', color: 'var(--muted)', fontSize: 13 }}>{t('col.settings.desc')}</p>
+      <p style={{ margin: '0 0 12px', fontSize: 13 }}>
+        {t('col.settings.state', { n: col.custom.length, s: steamCount, f: col.favoriteKeys.size, h: col.hiddenKeys.size })}
+      </p>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <button style={syncBtn} disabled={busy} onClick={() => void run()}>{busy ? '…' : t('col.settings.import')}</button>
+        <span style={{ fontSize: 12.5, color: 'var(--muted)' }}>{t('col.settings.importHint')}</span>
+      </div>
+      {result && (
+        <p style={{ margin: '10px 0 0', fontSize: 13, color: result.path ? 'var(--text)' : '#f0a35a' }}>
+          {result.path ? t('col.settings.importResult', { i: result.imported, u: result.updated, f: result.favorites, h: result.hidden }) : t('col.settings.importNone')}
+        </p>
+      )}
+      {error && <p style={{ margin: '10px 0 0', fontSize: 13, color: '#ff9f9f' }}>{error}</p>}
+    </div>
+  );
+};
+
 // ---- Auto-update (GitHub Releases; inert in dev builds) ----
 const UpdatesPanel: React.FC = () => {
   const { t } = useI18n();
@@ -580,6 +621,7 @@ const SettingsPage: React.FC = () => {
       <AppearancePanel />
       <AiPanel />
       <RegionsPanel steam={steam} epic={epic} onChanged={loadAccounts} />
+      <CollectionsPanel />
       <InstallPathPanel />
       <UpdatesPanel />
 

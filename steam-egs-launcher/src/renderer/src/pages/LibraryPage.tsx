@@ -19,6 +19,10 @@ import { GameView } from './GameDetailsPage';
 import { HomeIcon, ChevronDownIcon, SearchIcon } from '../components/icons';
 import { useScrollRestore } from '../hooks/useScrollRestore';
 import { TAG_CHIPS, chipMatches, profileFor, useProfiles, type TagChip } from '../hooks/useProfiles';
+import { useCollections } from '../hooks/useCollections';
+import CollectionMenu, { type MenuAnchor } from '../components/CollectionMenu';
+import CollectionEditor from '../components/CollectionEditor';
+import type { ResolvedCollection } from '../../../preload';
 
 // Library. Two views, chosen in Settings:
 //   list (default) — Steam-like split: the game list on the left (search,
@@ -100,15 +104,21 @@ const RowIcon: React.FC<{ game: Game }> = ({ game }) => {
   return <Fallback className="ico" srcs={[small, sid ? `${CDN}/${sid}/header.jpg` : null, game.iconUrl]} />;
 };
 
-const Section: React.FC<{ title: string; count: number; open: boolean; onToggle: () => void; children: React.ReactNode }> = ({ title, count, open, onToggle, children }) => (
+const Section: React.FC<{ title: string; count: number; open: boolean; onToggle: () => void; badge?: React.ReactNode; onEdit?: () => void; children: React.ReactNode }> = ({ title, count, open, onToggle, badge, onEdit, children }) => (
   <div>
-    <button className={`lib-section${open ? '' : ' closed'}`} onClick={onToggle}>
-      <span style={{ color: 'var(--muted)', display: 'flex' }}>
-        <ChevronDownIcon size={10} />
-      </span>
-      <span className="uc-header">{title}</span>
-      <span className="uc-header" style={{ color: '#55657d' }}>{count}</span>
-    </button>
+    <div className={`lib-section${open ? '' : ' closed'}`} style={{ padding: 0 }}>
+      <button className="lib-section" style={{ flex: 1, minWidth: 0 }} onClick={onToggle}>
+        <span style={{ color: 'var(--muted)', display: 'flex' }}>
+          <ChevronDownIcon size={10} />
+        </span>
+        <span className="uc-header" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</span>
+        {badge}
+        <span className="uc-header" style={{ color: '#55657d' }}>{count}</span>
+      </button>
+      {onEdit && (
+        <button className="lib-section-edit" onClick={onEdit} title="…">⋯</button>
+      )}
+    </div>
     {open && <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>{children}</div>}
   </div>
 );
@@ -129,9 +139,16 @@ const LibraryList: React.FC<{
   const [showChips, setShowChips] = useState(false);
   const profiles = useProfiles();
   const hasProfiles = Object.keys(profiles).length > 0;
+  const col = useCollections();
+  const [menu, setMenu] = useState<{ game: Game; anchor: MenuAnchor } | null>(null);
+  const [editor, setEditor] = useState<ResolvedCollection | 'new' | null>(null);
+  // Collapsed collection sections (Favorites and user collections start open, Hidden starts closed).
+  const [closed, setClosed] = useState<Set<string>>(() => new Set(['hidden']));
+  const toggleClosed = (id: string) => setClosed((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; });
 
   const installedSet = useMemo(() => (actions ? new Set(games.filter((g) => isInstalled(g, actions))) : new Set<Game>()), [games, actions]);
-  const filtered = useMemo(() => {
+  // Search, store and chip filters apply to every section alike; hidden games only appear in their own section.
+  const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     return games.filter(
       (g) =>
@@ -140,6 +157,11 @@ const LibraryList: React.FC<{
         (chips.length === 0 || chips.every((c) => chipMatches(c, profileFor(profiles, g))))
     );
   }, [games, query, source, chips, profiles]);
+  const filtered = useMemo(() => visible.filter((g) => !col.hiddenKeys.has(gameKey(g))), [visible, col.hiddenKeys]);
+  const hiddenGames = useMemo(() => visible.filter((g) => col.hiddenKeys.has(gameKey(g))), [visible, col.hiddenKeys]);
+  const favorites = useMemo(() => filtered.filter((g) => col.favoriteKeys.has(gameKey(g))), [filtered, col.favoriteKeys]);
+  const byKey = useMemo(() => new Map(filtered.map((g) => [gameKey(g), g])), [filtered]);
+  const collectionGames = (c: ResolvedCollection): Game[] => c.keys.map((k) => byKey.get(k)).filter((g): g is Game => !!g);
   const installed = filtered.filter((g) => installedSet.has(g));
 
   // Keep the selected row in view when the selection comes from the URL
@@ -154,13 +176,31 @@ const LibraryList: React.FC<{
     const key = gameKey(g);
     const src = g.sources.includes('Steam') ? 'var(--accent)' : 'var(--epic)';
     return (
-      <button key={key} className={`lib-row${inst ? ' inst' : ''}${key === selectedKey ? ' sel' : ''}`} onClick={() => onSelect(g)} title={g.title}>
+      <button
+        key={key}
+        className={`lib-row${inst ? ' inst' : ''}${key === selectedKey ? ' sel' : ''}`}
+        onClick={() => onSelect(g)}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          setMenu({ game: g, anchor: { x: e.clientX, y: e.clientY } });
+        }}
+        title={g.title}
+      >
         <RowIcon game={g} />
         <span className="ttl">{g.title}</span>
+        {col.favoriteKeys.has(key) && <span className="lib-fav">★</span>}
         <span style={{ width: 6, height: 6, borderRadius: '50%', background: src, flex: '0 0 auto' }} />
       </button>
     );
   };
+  const collectionBadge = (c: ResolvedCollection) =>
+    c.origin === 'steam' ? (
+      <span className="col-badge" title={t(c.edited ? 'col.steamEditedHint' : 'col.steamHint')}>
+        Steam{c.edited ? ` · ${t('col.edited')}` : ''}
+      </span>
+    ) : c.kind === 'dynamic' ? (
+      <span className="col-badge" title={t('col.kind.dynamicHint')}>ƒ</span>
+    ) : undefined;
 
   return (
     <aside
@@ -196,11 +236,13 @@ const LibraryList: React.FC<{
             {s.label}
           </button>
         ))}
+        <span style={{ flex: 1 }} />
         {hasProfiles && (
-          <button className={`pill${chips.length ? ' pill-active' : ''}`} style={{ padding: '5px 9px', fontSize: 12, marginLeft: 'auto' }} onClick={() => setShowChips((v) => !v)} title={t('tag.aiEstimate')}>
+          <button className={`pill${chips.length ? ' pill-active' : ''}`} style={{ padding: '5px 9px', fontSize: 12 }} onClick={() => setShowChips((v) => !v)} title={t('tag.aiEstimate')}>
             {showChips ? '▾' : '▸'} {t('lib.filters')}{chips.length ? ` · ${chips.length}` : ''}
           </button>
         )}
+        <button className="pill" style={{ padding: '5px 9px', fontSize: 12 }} onClick={() => setEditor('new')} title={t('col.newCollection')}>+</button>
       </div>
       {hasProfiles && showChips && (
         <div className="rise" style={{ display: 'flex', gap: 4, flexWrap: 'wrap', margin: '0 2px 12px 2px' }} title={t('tag.aiEstimate')}>
@@ -213,6 +255,20 @@ const LibraryList: React.FC<{
       )}
 
       <div ref={listRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {favorites.length > 0 && (
+          <Section title={`★ ${t('col.favorites')}`} count={favorites.length} open={!closed.has('favorite')} onToggle={() => toggleClosed('favorite')}>
+            {favorites.map((g) => row(g, installedSet.has(g)))}
+          </Section>
+        )}
+        {col.custom.map((c) => {
+          const list = collectionGames(c);
+          if (list.length === 0 && query.trim()) return null;
+          return (
+            <Section key={c.id} title={c.name} count={list.length} open={!closed.has(c.id)} onToggle={() => toggleClosed(c.id)} badge={collectionBadge(c)} onEdit={() => setEditor(c)}>
+              {list.length === 0 ? <p style={{ margin: '2px 10px 4px', fontSize: 12, color: 'var(--muted)' }}>{t(c.kind === 'dynamic' ? 'col.emptyDynamic' : 'col.emptyManual')}</p> : list.map((g) => row(g, installedSet.has(g)))}
+            </Section>
+          );
+        })}
         {installed.length > 0 && (
           <Section title={t('lib.installedSection')} count={installed.length} open={openInstalled} onToggle={() => setOpenInstalled((v) => !v)}>
             {installed.map((g) => row(g, true))}
@@ -221,7 +277,14 @@ const LibraryList: React.FC<{
         <Section title={t('lib.allSection')} count={filtered.length} open={openAll} onToggle={() => setOpenAll((v) => !v)}>
           {filtered.map((g) => row(g, installedSet.has(g)))}
         </Section>
+        {hiddenGames.length > 0 && (
+          <Section title={t('col.hidden')} count={hiddenGames.length} open={!closed.has('hidden')} onToggle={() => toggleClosed('hidden')}>
+            {hiddenGames.map((g) => row(g, installedSet.has(g)))}
+          </Section>
+        )}
       </div>
+      {menu && <CollectionMenu game={menu.game} anchor={menu.anchor} onClose={() => setMenu(null)} />}
+      {editor && <CollectionEditor existing={editor === 'new' ? null : editor} onClose={() => setEditor(null)} />}
     </aside>
   );
 };
@@ -349,11 +412,21 @@ const LibraryPage: React.FC = () => {
   const [view] = useState<LibraryView>(getLibraryView);
   const [gridChips, setGridChips] = useState<TagChip[]>([]);
   const [showGridChips, setShowGridChips] = useState(false);
+  const [gridCollection, setGridCollection] = useState<string>('');
   const profiles = useProfiles();
-  const gridFilter = useMemo(
-    () => (gridChips.length ? (g: Game) => gridChips.every((c) => chipMatches(c, profileFor(profiles, g))) : undefined),
-    [gridChips, profiles]
-  );
+  const col = useCollections();
+  const gridFilter = useMemo(() => {
+    const selected = gridCollection ? col.collections.find((c) => c.id === gridCollection) : null;
+    const keys = selected ? new Set(selected.keys) : null;
+    const hidden = col.hiddenKeys;
+    const showHidden = selected?.system === 'hidden';
+    return (g: Game) => {
+      const k = gameKey(g);
+      if (!showHidden && hidden.has(k)) return false;
+      if (keys && !keys.has(k)) return false;
+      return gridChips.length === 0 || gridChips.every((c) => chipMatches(c, profileFor(profiles, g)));
+    };
+  }, [gridChips, profiles, gridCollection, col.collections, col.hiddenKeys]);
   const [games, setGames] = useState<Game[]>(cachedGames ?? []);
   const [recent, setRecent] = useState<SteamRecentGame[]>(cachedRecent ?? []);
   const [error, setError] = useState<string | null>(null);
@@ -412,7 +485,18 @@ const LibraryPage: React.FC = () => {
               stateKey="library"
               extraFilter={gridFilter}
               extraControls={
-                Object.keys(profiles).length > 0 && (
+                <>
+                  {col.collections.length > 0 && (
+                    <select aria-label={t('col.collections')} value={gridCollection} onChange={(e) => setGridCollection(e.target.value)} style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--panel)', color: 'var(--text)', fontWeight: 600 }}>
+                      <option value="">{t('col.allGames')}</option>
+                      {col.favoriteKeys.size > 0 && <option value="favorite">★ {t('col.favorites')}</option>}
+                      {col.custom.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}{c.origin === 'steam' ? ' · Steam' : ''}</option>
+                      ))}
+                      {col.hiddenKeys.size > 0 && <option value="hidden">{t('col.hidden')}</option>}
+                    </select>
+                  )}
+                {Object.keys(profiles).length > 0 && (
                   <span style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginLeft: 6, alignItems: 'center' }} title={t('tag.aiEstimate')}>
                     <button className={`pill${gridChips.length ? ' pill-active' : ''}`} style={{ padding: '5px 10px', fontSize: 12 }} onClick={() => setShowGridChips((v) => !v)}>
                       {showGridChips ? '▾' : '▸'} {t('lib.filters')}{gridChips.length ? ` · ${gridChips.length}` : ''}
@@ -423,7 +507,8 @@ const LibraryPage: React.FC = () => {
                       </button>
                     ))}
                   </span>
-                )
+                )}
+                </>
               }
             />
           </>

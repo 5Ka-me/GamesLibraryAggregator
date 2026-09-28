@@ -11,6 +11,7 @@ import StatsPage from './pages/StatsPage';
 import RandomPage from './pages/RandomPage';
 import AiPage from './pages/AiPage';
 import SettingsPage from './pages/SettingsPage';
+import InventoryPage from './pages/InventoryPage';
 
 // Registers router-dependent platform hooks: library cards navigate to the
 // in-app game page (shared GameCard switches to compact actions because of it).
@@ -45,6 +46,7 @@ const App: React.FC = () => (
               <Route path="/search" element={<AiPage />} />
               <Route path="/random" element={<RandomPage />} />
               <Route path="/stats" element={<StatsPage />} />
+              <Route path="/inventory" element={<InventoryPage />} />
               <Route path="/settings" element={<SettingsPage />} />
             </Route>
           </Routes>

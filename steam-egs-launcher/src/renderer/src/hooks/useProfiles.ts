@@ -37,29 +37,9 @@ export function useProfiles(): Record<string, GameProfile> {
 export const profileFor = (profiles: Record<string, GameProfile>, game: Game | string): GameProfile | null =>
   profiles[normalizeTitle(typeof game === 'string' ? game : game.title)] ?? null;
 
-/** Quick filter chips built on the profiles (library list, random reel). */
-export type TagChip = 'short' | 'coop' | 'story' | 'cozy' | 'horror' | 'competitive';
-export const TAG_CHIPS: TagChip[] = ['short', 'coop', 'story', 'cozy', 'horror', 'competitive'];
-
-export function chipMatches(chip: TagChip, p: GameProfile | null): boolean {
-  if (!p || !p.known) return false;
-  switch (chip) {
-    case 'short':
-      return !p.endless && p.lengthHours !== null && p.lengthHours <= 6;
-    case 'coop':
-      return (p.coopPlayers ?? 0) >= 2 || p.modes.includes('coop_local') || p.modes.includes('coop_online');
-    case 'story':
-      return p.moods.includes('story_rich') || p.genres.includes('narrative') || p.genres.includes('visual_novel');
-    case 'cozy':
-      // "relaxing" alone is too broad (Factorio is relaxing to some): cozy, or relaxing without any edge.
-      return p.moods.includes('cozy') || (p.moods.includes('relaxing') && !p.moods.some((m) => m === 'challenging' || m === 'tense' || m === 'dark' || m === 'scary' || m === 'competitive'));
-    case 'horror':
-      return p.genres.includes('horror') || p.moods.includes('scary');
-    case 'competitive':
-      // PvP as a side mode doesn't make a game competitive; the mood or a PvP-first genre does.
-      return p.moods.includes('competitive') || p.genres.some((g) => g === 'battle_royale' || g === 'fighting' || g === 'sports' || g === 'racing') || (p.modes.includes('pvp') && !p.modes.includes('single'));
-  }
-}
+// Quick filter chips live in @app/shared (tagChips.ts) so the main process evaluates them the same way.
+export { TAG_CHIPS, chipMatches } from '@app/shared';
+export type { TagChip } from '@app/shared';
 
 /** Compact one-line profile: "≈ 12 h · Roguelike, Action · co-op ×2". */
 export function profileLine(p: GameProfile, t: (k: string, v?: Record<string, string | number>) => string): string[] {

@@ -274,13 +274,13 @@ async function mintToken(ses: Session, partition: string): Promise<string | null
  * Falls back to an anonymous request when nobody is signed in — public
  * profiles are readable either way.
  */
-export async function communityFetch(url: string): Promise<Response> {
+export async function communityFetch(url: string, init: { signal?: AbortSignal } = {}): Promise<Response> {
   const ses = await getActiveSteamSession();
-  if (!ses) return fetch(url);
+  if (!ses) return fetch(url, { signal: init.signal });
   if ((await accessTokenExpiry(ses, COMMUNITY_ORIGIN)) < Date.now() + 60_000) {
     await refreshSession(ses, COMMUNITY_ORIGIN);
   }
-  return ses.fetch(url, { credentials: 'include' });
+  return ses.fetch(url, { credentials: 'include', signal: init.signal });
 }
 
 /**

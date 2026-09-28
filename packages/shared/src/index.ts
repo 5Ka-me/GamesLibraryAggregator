@@ -38,6 +38,10 @@ export type { LibraryActions, GameInstallState } from './libraryActions';
 export { epicAppName } from './epicUtil';
 export { steamAppId } from './steamUtil';
 export { normalizeTitle } from './matching';
+export { TAG_CHIPS, chipMatches } from './tagChips';
+export type { TagChip, ProfileLike } from './tagChips';
+export { economyImage, isFoil, notableQuality, parseMoney, qualityRank, rarityRank, stackKey, tagOf } from './inventoryUtil';
+export type { InvTagLike } from './inventoryUtil';
 
 export { SOURCES, SOURCE_IDS, sourceMeta } from './sources';
 export type { SourceMeta } from './sources';

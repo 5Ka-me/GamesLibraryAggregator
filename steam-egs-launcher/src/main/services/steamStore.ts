@@ -52,7 +52,18 @@ export interface StoreItem {
   releaseUnix?: number;
   /** What the app is (GetItems `type`: 0 game, 4 DLC, 11 soundtrack); absent = unknown. */
   kind?: 'game' | 'dlc' | 'music' | 'other';
+  /**
+   * Steam's user tags ("VR", "Roguelike", …), most voted first, followed by official platform
+   * flags expressed as tags: "Steam Deck Verified" / "Steam Deck Playable" / "Steam Deck Unsupported",
+   * "VR Supported" / "VR Only". Absent in metadata cached before tags were requested.
+   */
+  tags?: string[];
+  /** Metadata layout version; the library index refetches once when it sees an older layout. */
+  metaV?: number;
 }
+
+/** Bumped when fetchMetaChunks starts recording new fields, so cached items get refreshed once. */
+export const META_VERSION = 2;
 
 export interface StoreSection {
   id: string;
@@ -405,6 +416,103 @@ export async function storeSearch(term: string, lang: string): Promise<StoreItem
   });
 }
 
+// ===================== Browse by tags =====================
+
+/** Everyday words → the Steam tag they mean (the tag list itself is matched case-insensitively). */
+const TAG_SYNONYMS: Record<string, string> = {
+  erotic: 'Sexual Content',
+  erotica: 'Sexual Content',
+  nsfw: 'Sexual Content',
+  adult: 'Sexual Content',
+  'adult only': 'Sexual Content',
+  sex: 'Sexual Content',
+  porn: 'Hentai',
+  coop: 'Co-op',
+  'co op': 'Co-op',
+  cooperative: 'Co-op',
+  roguelike: 'Roguelike',
+  roguelite: 'Roguelite',
+  'rogue-like': 'Roguelike',
+  'souls-like': 'Souls-like',
+  soulslike: 'Souls-like',
+  metroidvania: 'Metroidvania',
+  'pixel art': 'Pixel Graphics',
+  'pixel': 'Pixel Graphics',
+  '2d': '2D',
+  '3d': '3D',
+  'first person': 'First-Person',
+  'third person': 'Third Person',
+  'story': 'Story Rich',
+  'story-rich': 'Story Rich',
+  'open-world': 'Open World',
+  'single player': 'Singleplayer',
+  'single-player': 'Singleplayer',
+  cozy: 'Cozy',
+  farming: 'Farming Sim',
+  'deck builder': 'Deckbuilding',
+  deckbuilder: 'Deckbuilding',
+};
+
+export interface StoreBrowseResult {
+  items: StoreItem[];
+  /** The Steam tag names actually used. */
+  tags: string[];
+  /** Requested words that matched no Steam tag. */
+  unknownTags: string[];
+}
+
+export type StoreBrowseSort = 'relevance' | 'reviews' | 'new' | 'price';
+
+/**
+ * Steam's own tag search (the storefront's search page in JSON form): games
+ * carrying ALL the given tags, optionally on sale, sorted. Adult tags are
+ * ordinary tags here — the mature-content cookies make sure age-gated titles
+ * are not silently dropped. Appids come from the capsule URLs; the batched
+ * metadata adds price, kind and tags.
+ */
+export async function storeBrowseByTags(
+  wanted: string[],
+  lang: string,
+  opts: { onSaleOnly?: boolean; sort?: StoreBrowseSort; limit?: number } = {}
+): Promise<StoreBrowseResult> {
+  const names = await tagNames('en');
+  const byName = new Map<string, { id: string; name: string }>();
+  for (const [id, name] of Object.entries(names)) byName.set(name.toLowerCase(), { id, name });
+  const tags: { id: string; name: string }[] = [];
+  const unknownTags: string[] = [];
+  for (const raw of wanted) {
+    const w = raw.trim().toLowerCase();
+    if (!w) continue;
+    const hit = byName.get(w) ?? byName.get((TAG_SYNONYMS[w] ?? '').toLowerCase()) ?? byName.get(w.replace(/-/g, ' ')) ?? byName.get(w.replace(/\s+/g, '-'));
+    if (hit) {
+      if (!tags.some((t) => t.id === hit.id)) tags.push(hit);
+    } else unknownTags.push(raw);
+  }
+  if (!tags.length) return { items: [], tags: [], unknownTags };
+  const { l, cc } = region(lang);
+  const limit = Math.min(50, Math.max(1, opts.limit ?? 20));
+  const sortBy = opts.sort === 'reviews' ? 'Reviews_DESC' : opts.sort === 'new' ? 'Released_DESC' : opts.sort === 'price' ? 'Price_ASC' : '';
+  const key = `browse:${lang}:${cc}:${tags.map((t) => t.id).join(',')}:${opts.onSaleOnly ? 1 : 0}:${sortBy}:${limit}`;
+  const items = await cached(NS, key, getStoreCacheTtlMs(), async () => {
+    const url =
+      `https://store.steampowered.com/search/results/?json=1&category1=998&count=${limit}&start=0` +
+      `&tags=${tags.map((t) => t.id).join(',')}&cc=${cc}&l=${l}` +
+      (opts.onSaleOnly ? '&specials=1' : '') +
+      (sortBy ? `&sort_by=${sortBy}` : '');
+    const data = await httpJson<any>(url, {
+      headers: { 'User-Agent': BROWSER_UA, Cookie: 'birthtime=0; wants_mature_content=1; lastagecheckage=1-0-1990' },
+    });
+    const appids: number[] = [];
+    for (const it of Array.isArray(data?.items) ? data.items : []) {
+      const m = /\/apps\/(\d+)\//.exec(String(it?.logo ?? ''));
+      if (m) appids.push(Number(m[1]));
+    }
+    const meta = await itemsMeta([...new Set(appids)], lang);
+    return appids.map((id) => meta[id]).filter((x): x is StoreItem => !!x && (!x.kind || x.kind === 'game') && !x.comingSoon);
+  });
+  return { items, tags: tags.map((t) => t.name), unknownTags };
+}
+
 /**
  * Finds a game's Steam appid by title (used for games known only from EGS).
  * Strict normalized-title match — a wrong appid would produce bogus details
@@ -541,11 +649,12 @@ async function fetchMetaChunks(
   lang: string,
   result: Record<number, StoreItem>
 ): Promise<Record<number, StoreItem>> {
+  const names = ids.length ? await tagNames(lang).catch(() => ({}) as Record<string, string>) : {};
   for (const chunk of chunks(ids, 100)) {
     const input = {
       ids: chunk.map((appid) => ({ appid })),
       context: { language: l, country_code: cc, steam_realm: 1 },
-      data_request: { include_basic_info: true, include_assets: true, include_pricing: true, include_release: true },
+      data_request: { include_basic_info: true, include_assets: true, include_pricing: true, include_release: true, include_tag_count: 20, include_platforms: true },
     };
     try {
       const resp = await getJson<any>(
@@ -564,10 +673,21 @@ async function fetchMetaChunks(
             : undefined;
         const kind: StoreItem['kind'] =
           si.type === 0 ? 'game' : si.type === 4 ? 'dlc' : si.type === 11 ? 'music' : typeof si.type === 'number' ? 'other' : undefined;
+        const tags = (Array.isArray(si.tags) ? (si.tags as { tagid: number }[]) : []).map((t) => names[String(t.tagid)]).filter((x): x is string => !!x);
+        // Official platform flags as tags, so "Steam Deck Verified" or "VR Only" filter like any other tag.
+        const deck = si.platforms?.steam_deck_compat_category;
+        if (deck === 3) tags.push('Steam Deck Verified');
+        else if (deck === 2) tags.push('Steam Deck Playable');
+        else if (deck === 1) tags.push('Steam Deck Unsupported');
+        const vr = si.platforms?.vr_support;
+        if (vr?.vrhmd_only) tags.push('VR Only');
+        else if (vr?.vrhmd) tags.push('VR Supported');
         const item: StoreItem = {
           appid: si.appid,
           name: si.name,
           ...(kind ? { kind } : {}),
+          tags,
+          metaV: META_VERSION,
           image: assetImage(si) ?? conventionCapsule(si.appid),
           isFree: si.is_free ?? false,
           // Steam's own flag when present; otherwise derived at read time from

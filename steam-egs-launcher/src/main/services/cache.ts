@@ -118,6 +118,15 @@ export function cacheSet(ns: string, key: string, data: unknown): void {
   scheduleSave(ns);
 }
 
+/** Every entry of a namespace whose key starts with the prefix (fresh or stale — callers decide). */
+export function cacheList<T>(ns: string, prefix = ''): { key: string; data: T; at: number }[] {
+  const out: { key: string; data: T; at: number }[] = [];
+  for (const [key, entry] of loadNamespace(ns).entries) {
+    if (key.startsWith(prefix)) out.push({ key, data: entry.data as T, at: entry.at });
+  }
+  return out;
+}
+
 /** Drop entries of a namespace (optionally only keys with the prefix). */
 export function cachePurge(ns: string, prefix?: string): void {
   const space = loadNamespace(ns);

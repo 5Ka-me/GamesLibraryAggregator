@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { normalizeTitle, useI18n, useLibraryActions } from '@app/shared';
-import type { AiStatus, AssistantGame, AssistantProgress, AssistantReply, StoreItem } from '../../../preload';
+import type { AiStatus, AssistantGame, AssistantProgress, AssistantReply, ContextGame, StoreItem } from '../../../preload';
+import GamePicker, { CONTEXT_LIMIT, contextKey } from '../components/GamePicker';
 import { ItemCard, useOwnership } from '../store/parts';
 import { excludeFromReel, isExcludedFromReel } from './RandomPage';
 
@@ -11,6 +12,7 @@ import { excludeFromReel, isExcludedFromReel } from './RandomPage';
 // renders what came back and resolves game names into real cards with actions.
 
 const CHAT_KEY = 'ai:chat';
+const CONTEXT_KEY = 'ai:context';
 const CHAT_MAX = 30;
 const CDN = 'https://cdn.cloudflare.steamstatic.com/steam/apps';
 
@@ -33,6 +35,22 @@ function loadChat(): Msg[] {
 function saveChat(list: Msg[]): void {
   try {
     localStorage.setItem(CHAT_KEY, JSON.stringify(list.filter((m) => !m.error).slice(-CHAT_MAX)));
+  } catch {
+    /* ignore */
+  }
+}
+
+function loadContext(): ContextGame[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(CONTEXT_KEY) ?? '[]');
+    return Array.isArray(raw) ? raw.filter((g): g is ContextGame => g && typeof g.title === 'string' && ['library', 'wishlist', 'store'].includes(g.origin)).slice(0, CONTEXT_LIMIT) : [];
+  } catch {
+    return [];
+  }
+}
+function saveContext(list: ContextGame[]): void {
+  try {
+    localStorage.setItem(CONTEXT_KEY, JSON.stringify(list));
   } catch {
     /* ignore */
   }
@@ -113,14 +131,30 @@ const OwnedRow: React.FC<{ g: AssistantGame }> = ({ g }) => {
   );
 };
 
-const Thinking: React.FC<{ progress: AssistantProgress | null }> = ({ progress }) => {
+const Thinking: React.FC<{ progress: AssistantProgress | null; bubble: React.CSSProperties }> = ({ progress, bubble }) => {
   const { t } = useI18n();
   const text =
-    progress?.phase === 'tools' && progress.tools.length
-      ? t('chat.tools', { t: progress.tools.map((x) => t(`chat.tool.${x}`)).join(', ') })
-      : progress?.phase === 'answer'
-        ? t('chat.answering')
-        : t('chat.thinking');
+    progress?.switchedTo
+      ? t('chat.switching', { m: progress.switchedTo.split('/').pop() ?? progress.switchedTo })
+      : progress?.phase === 'tools' && progress.tools.length
+        ? t('chat.tools', { t: progress.tools.map((x) => t(`chat.tool.${x}`)).join(', ') })
+        : progress?.phase === 'answer'
+          ? t('chat.answering')
+          : t('chat.thinking');
+  // While the final answer streams in, show it in place — the cards follow when the JSON completes.
+  if (progress?.partial) {
+    return (
+      <div className="rise" style={{ alignSelf: 'stretch', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={bubble}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+            <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1, padding: '1px 5px', borderRadius: 4, border: '1px solid rgba(185,203,224,0.5)', color: '#b9cbe0' }}>AI</span>
+            <span className="ai-dots"><span /><span /><span /></span>
+          </div>
+          <Markdown text={progress.partial} />
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="rise" style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, color: 'var(--muted)', padding: '4px 0' }}>
       <span className="ai-dots"><span /><span /><span /></span>
@@ -139,6 +173,13 @@ const AiPage: React.FC = () => {
   const [status, setStatus] = useState<AiStatus | null>(null);
   const [msgs, setMsgs] = useState<Msg[]>(loadChat);
   const [input, setInput] = useState('');
+  // Games attached through the picker: sent with every turn until cleared or a new chat.
+  const [context, setContextState] = useState<ContextGame[]>(loadContext);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const setContext = (next: ContextGame[]) => {
+    setContextState(next);
+    saveContext(next);
+  };
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<AssistantProgress | null>(null);
   const [storeMeta, setStoreMeta] = useState<Record<number, StoreItem>>({});
@@ -152,7 +193,7 @@ const AiPage: React.FC = () => {
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: 'end' });
-  }, [msgs.length, busy]);
+  }, [msgs.length, busy, progress?.partial?.length]);
 
   // Store cards for unowned games the model named and for store tool results.
   useEffect(() => {
@@ -182,7 +223,7 @@ const AiPage: React.FC = () => {
       setBusy(true);
       setProgress({ phase: 'thinking', tools: [], round: 0 });
       try {
-        const reply = await window.launcher.aiChat(base.map((m) => ({ role: m.role, content: m.content })), lang);
+        const reply = await window.launcher.aiChat(base.map((m) => ({ role: m.role, content: m.content })), lang, context);
         const next = [...base, { id: uid(), role: 'assistant' as const, content: reply.answer, reply }];
         setMsgs(next);
         saveChat(next);
@@ -194,7 +235,7 @@ const AiPage: React.FC = () => {
         inputRef.current?.focus();
       }
     },
-    [busy, msgs, lang]
+    [busy, msgs, lang, context]
   );
 
   const errorText = (code: string): string => {
@@ -202,6 +243,7 @@ const AiPage: React.FC = () => {
     if (code.includes('AI_AUTH')) return t('search.err.auth');
     if (code.includes('AI_BALANCE')) return t('search.err.balance');
     if (code.includes('AI_RATE')) return t('search.err.rate');
+    if (code.includes('AI_TIMEOUT') || /TimeoutError|aborted due to timeout/i.test(code)) return t('chat.err.timeout');
     return `${t('common.error')}: ${code.replace(/^Error invoking remote method '[^']+': Error: /, '')}`;
   };
 
@@ -220,7 +262,7 @@ const AiPage: React.FC = () => {
         <h1 style={{ margin: 0, fontSize: 28, fontWeight: 800 }}>{t('chat.title')}</h1>
         <span style={{ flex: 1 }} />
         {msgs.length > 0 && (
-          <button className="pill" style={{ padding: '4px 10px', fontSize: 12 }} disabled={busy} onClick={() => { setMsgs([]); saveChat([]); inputRef.current?.focus(); }}>
+          <button className="pill" style={{ padding: '4px 10px', fontSize: 12 }} disabled={busy} onClick={() => { setMsgs([]); saveChat([]); setContext([]); inputRef.current?.focus(); }}>
             ✎ {t('chat.newChat')}
           </button>
         )}
@@ -348,7 +390,7 @@ const AiPage: React.FC = () => {
           )
         )}
 
-        {busy && <Thinking progress={progress} />}
+        {busy && <Thinking progress={progress} bubble={bubble} />}
         <div ref={endRef} />
       </div>
 
@@ -358,8 +400,22 @@ const AiPage: React.FC = () => {
           e.preventDefault();
           void send(input);
         }}
-        style={{ position: 'sticky', bottom: 0, display: 'flex', gap: 10, padding: '14px 0 18px', background: 'linear-gradient(180deg, rgba(19,25,34,0) 0%, var(--bg) 30%)' }}
+        style={{ position: 'sticky', bottom: 0, display: 'flex', flexWrap: 'wrap', gap: 10, padding: '14px 0 18px', background: 'linear-gradient(180deg, rgba(19,25,34,0) 0%, var(--bg) 30%)' }}
       >
+        {context.length > 0 && (
+          <div style={{ flex: '1 1 100%', display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 12 }}>
+            <span style={{ color: 'var(--muted)' }}>{t('picker.attached', { n: context.length })}</span>
+            {context.map((g) => (
+              <button key={contextKey(g)} type="button" className="rnd-chip" style={{ padding: '2px 8px', fontSize: 11.5 }} title={t(`picker.origin.${g.origin}`)} onClick={() => setContext(context.filter((x) => contextKey(x) !== contextKey(g)))}>
+                {g.origin === 'library' ? '▣ ' : g.origin === 'wishlist' ? '♡ ' : '🛒 '}{g.title} ✕
+              </button>
+            ))}
+            <button type="button" className="pill" style={{ padding: '2px 8px', fontSize: 11.5, color: 'var(--muted)', background: 'transparent' }} onClick={() => setContext([])}>{t('picker.clearAll')}</button>
+          </div>
+        )}
+        <button type="button" className={`pill${context.length ? ' pill-active' : ''}`} style={{ padding: '0 14px', fontSize: 16, flex: '0 0 auto', height: 46, borderRadius: 12 }} disabled={busy} onClick={() => setPickerOpen(true)} title={t('picker.open')}>
+          +{context.length ? <span style={{ fontSize: 12, marginLeft: 4 }}>{context.length}</span> : null}
+        </button>
         <div className="field-wrap" style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 10, height: 46, padding: '0 14px', borderRadius: 12, background: 'var(--input-bg)', border: `1px solid ${busy ? 'rgba(87,184,240,0.5)' : 'var(--border)'}`, transition: 'border-color 0.2s ease' }}>
           <input
             ref={inputRef}
@@ -380,6 +436,7 @@ const AiPage: React.FC = () => {
           {busy ? t('chat.thinkingShort') : t('chat.send')}
         </button>
       </form>
+      {pickerOpen && <GamePicker selected={context} onChange={setContext} onClose={() => setPickerOpen(false)} />}
     </div>
   );
 };

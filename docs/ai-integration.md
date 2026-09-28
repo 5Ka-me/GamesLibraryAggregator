@@ -26,7 +26,9 @@ accounting) is `services/aiClient.ts`. Settings live in the "AI" panel of `Setti
   (~$0.12/$0.37 per 1M); `Qwen/Qwen3-32B-TEE` — an alternative at the same price;
   `deepseek-ai/DeepSeek-V4-Flash-0731-TEE` — smarter (~$0.44/$1.32); `zai-org/GLM-5.1-TEE` —
   best quality (~$0.98/$3.08). On a 429 "at maximum capacity" the client retries, then
-  switches to the next model on the list; the answer footer shows which model replied.
+  switches to the next model on the list; the answer footer shows which model replied. Thinking
+  models get `chat_template_kwargs.enable_thinking = false` (Qwen3 otherwise returns an empty
+  content field), and an empty reply counts as a busy model, so the next one is tried.
 - **Cost.** A chat turn is 3–9k tokens (one or two tool rounds), i.e. a fraction of a cent on
   the default model; a game verdict ~1.5–3k; profiling a ~700-game library ~150k tokens,
   about $0.06. The usage counter is visible in Settings.
@@ -50,6 +52,22 @@ Everything the tools returned during the turn is available under "All results", 
 search-like question still shows the full list rather than only what the model chose to
 mention.
 
+**Streaming.** Every round is requested with `stream: true` (SSE). Tool rounds produce nothing
+visible; when the final JSON starts with `"answer": "…"`, the launcher decodes the string value
+as it arrives (`partialAnswer` in `assistant.ts`) and pushes it to the page as `ai:progress`
+events (throttled to ~12/s), so the text paints while the model writes and the cards appear once
+the JSON closes. Usage comes from the last chunk (`stream_options.include_usage`).
+
+### Attached games (context picker)
+
+The "+" button next to the composer opens a side drawer with three tabs — library, Steam
+wishlist, Steam store (title search) — where up to 20 games can be ticked. They show as chips
+above the input and travel with every turn until cleared or a new chat starts. Only the title
+and where it came from (library / wishlist / store) go into the system prompt; the model is told
+that "these" refers to the list, to fetch facts through the tools only when needed, to propose
+concrete titles from its knowledge for "games like these" and to verify each one with
+`store_search` / `library_find` before recommending it, excluding the attached games themselves.
+
 ### Tools and what they return
 
 What the model gets is the user's decision (2026-09-14): **games with their facts** — title,
@@ -61,21 +79,59 @@ deliberate balance between useful advice and the amount of personal data at a th
 
 | Tool | Arguments | Returns |
 |---|---|---|
-| `library_find` | store, installed, `played` buckets (never / <1h / 1-10h / 10-50h / 50h+), `achievements` (none / started / half / almost / perfect), `lastPlayed` (2 weeks / 90 days / >180 days / never), `titleContains`, `titles` (exact titles for follow-ups), `tags` from the profile vocabularies (genres, moods, modes, themes, length), sort, limit ≤ 40 | games with hours, last-played date, last-2-weeks hours, achievements `unlocked/total (%)`, install flag and the AI profile |
+| `library_find` | store, installed, `played` buckets (never / <1h / 1-10h / 10-50h / 50h+), `achievements` (none / started / half / almost / perfect), `lastPlayed` (2 weeks / 90 days / >180 days / never), `titleContains`, `titles` (exact titles for follow-ups), `tags` from the profile vocabularies (genres, moods, modes, themes, length), `steamTags` (Steam user tags of the Steam copy — "VR", "Anime", "Pixel Graphics"…, any of), sort, limit ≤ 40 | games with hours, last-played date, last-2-weeks hours, achievements `unlocked/total (%)`, install flag, top Steam tags and the AI profile |
 | `random_pick` | the same filters | a few random games from the pool |
 | `game_profile` | title | one game's profile plus the same facts |
 | `store_search` | query by **name**, `onSaleOnly` | Steam games with price, discount, owned flag; DLC and soundtracks filtered out by `GetItems.type` |
+| `store_browse` | Steam tag names (all must match; everyday words like "erotic" or "coop" map to tags), `onSaleOnly`, `sort` (relevance / reviews / new / price), `limit` ≤ 20, `excludeOwned` | store games by kind — the storefront's own tag search (`search/results?json=1&tags=…`, with mature-content cookies so age-gated titles are not dropped), resolved through the batched metadata |
 | `store_game_info` | title or appid | price, discount, release, genres, tags, Metacritic, reviews all-time and **last 30 days (a sample of up to 100)**, current players, review snippets, **similar owned games** with hours played |
 | `wishlist` | `onSaleOnly` | the Steam wishlist with prices and discounts |
 | `achievements` | title | progress and the remaining achievements of one game, **easiest first** (by global unlock rate) |
+| `inventory_overview` | — | the Steam inventory per game: item, tradable and marketable counts |
+| `inventory_find` | game, text query, tag values (all must match), tradable, marketable, sort (rarity / price / name / quantity / newest), `withPrices` | items with identical ones stacked: type, rarity, quality, exterior, quantity, trade hold, main tags; with `withPrices` (or sort "price") Market prices are loaded for up to 10 items |
 
 There is no statistics tool: the Statistics page shows the same numbers without a model.
+The inventory tools are read-only like the Inventory page: the prompt tells the model to describe
+items, never to offer selling, trading or crafting, and to keep items out of the `games` array
+(which the app resolves against the library and the store).
+
+**Adult content.** Nothing in the launcher filters it: Steam's search returns age-gated titles, the tag
+browse sends the mature-content cookies, and the prompt tells the model adult tags are ordinary
+tags. What remains is the model's own policy — Gemma is the most cautious of the four; DeepSeek
+and GLM relay such results plainly. The earlier "nothing found" for "anime roguelikes with
+erotica" was a title search fed genre words, not censorship.
+Steam user tags come from the batched `GetItems` metadata (`include_tag_count`), extended with official
+platform flags expressed as tags — "Steam Deck Verified / Playable / Unsupported", "VR Supported / VR Only"
+(`include_platforms`); games that exist
+only on Epic get the EGS offer's genre + feature tags instead (`epicTags` in `epicStore.ts`, one
+GraphQL call per game, cached a week, warmed in the background three at a time). So concepts the
+profile vocabulary lacks (VR, anime, pixel art) are still filterable on both stores; a vocabulary value the model
+invents is **rejected with a message**, never silently dropped — an ignored filter used to return the
+whole library sorted by playtime, which read as "you have no VR games".
 Tags are matched against the local profiles offline — zero tokens; the model is told how
 many games have no profile and therefore could not match a tag filter.
 
 ### Assistant prompt (system)
 
-Full text: `SYSTEM` in `assistant.ts`. Techniques:
+Full text: `SYSTEM` in `assistant.ts`. Structure (2026-09-21 rewrite, after the user's choices:
+concise style, assume-then-ask, library first, wishlist and price checks before purchase advice,
+no repeats, smart-model escalation):
+
+1. Role and the one non-negotiable: every claim comes from tool results.
+2. How data is reached (tools, rounds, call budget).
+3. Tools with typed arguments and what each returns.
+4. Vocabularies, with the routing rule "outside the vocabulary → steamTags, topics → themes".
+5. Rules in priority order (language of the latest message; lookup before "you don't have it";
+   source order library → wishlist → store, moving on only when the previous source yields
+   fewer than two fitting games; hard constraints such as VR / co-op / length must hold for
+   every listed game and are checked against returned facts, soft wishes only rank; wishlist + price/review check before purchase advice; no repeats within
+   a conversation; attached games are the subject; act on the likely reading and put alternatives
+   into suggestions; one call for follow-ups; honesty about gaps).
+6. Phrase → call shortcuts (the few-shot part small models need).
+7. Style: two sentences at most before the games, notes ≤ 10 words built on a fact, no filler.
+8. Output contract with both shapes.
+
+Techniques worth keeping:
 
 - **A contract instead of a persona.** Tools with argument types, the tag vocabularies, the
   final answer format. "Either calls or the answer, nothing outside JSON" +
@@ -90,6 +146,16 @@ Full text: `SYSTEM` in `assistant.ts`. Techniques:
   `titles: [...]`, never one call per game (the model used to make four).
 - **Honesty about gaps**: no profiles → say the tag filter could not be applied; Steam not
   signed in → say the wishlist and achievements are unavailable.
+- **Language of the latest message**, not of the interface: a Russian question gets a Russian
+  answer even when the UI is English.
+- **Named game → look it up first** (`titles: [...]` or `game_profile`) before claiming it is
+  not in the library.
+- **Contract violations get one correction round**: a reply with neither `calls` nor a
+  non-empty `answer` is sent back with a reminder instead of surfacing as an empty bubble.
+- **Escalation for advice**: tool rounds run on the user's (cheap) model; once a turn that asks
+  for recommendations has facts, the remaining rounds run on the "smart" curated model
+  (DeepSeek), unless the user's own choice already ranks at least as high. The footer shows the
+  model that wrote the answer. Roughly ×3 on the final call, nothing on plain lookups.
 - **Context** in one line: language, date, library size, how many games have profiles,
   whether Steam is signed in.
 
