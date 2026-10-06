@@ -4,6 +4,7 @@ import { GENRES, MODES, MOODS, getProfiles, matchProfile, type GameProfile, type
 import { steamAchievementsProgress, type SteamAchievementProgress } from './steamSync';
 import { META_VERSION, itemsMeta } from './steamStore';
 import { epicTagsCached, warmEpicTags } from './epicStore';
+import { getFactCard } from './gameFacts';
 import { scanInstalledSteamAppIds } from './steamScan';
 import * as legendary from './legendary';
 
@@ -34,7 +35,11 @@ export interface LibGame {
   installed: boolean;
   profile: GameProfile | null;
   progress: SteamAchievementProgress | null;
-  /** Steam's user tags for the Steam copy ("VR", "Roguelike", …); empty for EGS-only games or until loaded. */
+  /**
+   * Steam's user tags for the Steam copy ("VR", "Roguelike", …, then the platform flags). For Epic-only
+   * games: the Steam twin's user tags and VR flags from the fact card, then EGS genre/feature tags.
+   * Empty until loaded (libraryView withStoreTags).
+   */
   storeTags: string[];
 }
 
@@ -61,13 +66,39 @@ async function installedSets(): Promise<{ steam: Set<string>; epic: Set<string> 
 
 let storeTagsRefetched = false;
 
+/** Case-insensitive dedupe that keeps the first spelling and the order. */
+function dedupeTags(tags: string[]): string[] {
+  const seen = new Set<string>();
+  return tags.filter((t) => {
+    const k = t.toLowerCase();
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
+/**
+ * Store tags an Epic-only game's fact card contributes. A Steam twin's user tags describe the same
+ * game, VR flags included; its Steam Deck rating is left out, because Valve rated the Steam build and
+ * the Epic copy runs through another launcher. An 'epic' card holds the EGS genres/features, the same
+ * vocabulary as the live EGS tags, so it covers games the background warm-up has not reached yet.
+ */
+function cardTags(key: string): string[] {
+  const card = getFactCard(key);
+  if (card?.source === 'steam_twin') return card.storeTags.filter((t) => !/^Steam Deck /i.test(t));
+  if (card?.source === 'epic') return card.storeTags;
+  return [];
+}
+
 /**
  * Attaches store tags: Steam user tags from the batched store metadata for
  * Steam copies (cached, SWR; one forced refresh per process for metadata
- * cached before tags were requested), and EGS genre/feature tags for games
- * that exist only on Epic. The Epic side warms in the background — the first
- * call waits briefly for what the disk cache already has and later calls see
- * the rest.
+ * cached before tags were requested; the persisted fact card when the store
+ * gives nothing). Games that exist only on Epic get their fact card's tags —
+ * the Steam twin's user tags first, so Steam-tag filters ("VR", "Anime") reach
+ * them too — plus the EGS genre/feature tags. The EGS side warms in the
+ * background — the first call waits briefly for what the disk cache already
+ * has and later calls see the rest; cards are read synchronously from disk.
  */
 async function attachStoreTags(list: LibGame[]): Promise<void> {
   const ids = list.map((g) => g.appid).filter((x): x is number => !!x);
@@ -78,14 +109,51 @@ async function attachStoreTags(list: LibGame[]): Promise<void> {
       storeTagsRefetched = true;
       meta = await itemsMeta(ids, 'en', true).catch(() => meta);
     }
-    for (const g of list) if (g.appid) g.storeTags = meta[g.appid]?.tags ?? [];
+    for (const g of list) if (g.appid) g.storeTags = meta[g.appid]?.tags ?? getFactCard(g.key)?.storeTags ?? [];
   }
-  const epicOnly = list.filter((g) => !g.appid && g.epicNamespace);
-  if (epicOnly.length) {
-    const warm = warmEpicTags(epicOnly.map((g) => ({ ns: g.epicNamespace!, title: g.title })));
+  const epicOnly = list.filter((g) => !g.appid);
+  const withNs = epicOnly.filter((g) => g.epicNamespace);
+  if (withNs.length) {
+    const warm = warmEpicTags(withNs.map((g) => ({ ns: g.epicNamespace!, title: g.title })));
     await Promise.race([warm, new Promise((r) => setTimeout(r, 2000))]);
-    for (const g of epicOnly) g.storeTags = epicTagsCached(g.epicNamespace!) ?? [];
   }
+  for (const g of epicOnly) {
+    g.storeTags = dedupeTags([...cardTags(g.key), ...(g.epicNamespace ? (epicTagsCached(g.epicNamespace) ?? []) : [])]);
+  }
+}
+
+/**
+ * Steam appids the user owns the game of: Steam copies plus the Steam twins of Epic-only games (from
+ * their fact cards). A store listing of a game owned on Epic then counts as owned even when its
+ * localized or edition-suffixed store name differs from the library title.
+ */
+export function ownedSteamAppids(list: LibGame[]): Set<number> {
+  const out = new Set<number>();
+  for (const g of list) {
+    if (g.appid) out.add(g.appid);
+    else {
+      const card = getFactCard(g.key);
+      if (card?.source === 'steam_twin' && card.appid) out.add(card.appid);
+    }
+  }
+  return out;
+}
+
+/** The official platform flags itemsMeta and the fact cards add as tags (English in every UI language). */
+export const PLATFORM_FLAG_RE = /^(Steam Deck (Verified|Playable|Unsupported)|VR (Only|Supported))$/i;
+
+/**
+ * The store tags shown to a model for one game, at most `max`: platform flags first (the store lists them
+ * after up to 20 user tags, so a plain slice never showed them), then the tags a filter asked for (`want`,
+ * substring match), then the most voted rest. A model told to check hard properties against the facts
+ * must be able to see what the filter matched.
+ */
+export function factTags(tags: string[], want: string[], max = 8): string[] {
+  const w = want.map((x) => x.toLowerCase()).filter(Boolean);
+  const asked = (t: string): boolean => w.some((x) => t.toLowerCase().includes(x));
+  const flags = tags.filter((t) => PLATFORM_FLAG_RE.test(t));
+  const rest = tags.filter((t) => !PLATFORM_FLAG_RE.test(t));
+  return [...flags, ...rest.filter(asked), ...rest.filter((t) => !asked(t))].slice(0, max);
 }
 
 export async function libraryView(withProgress: boolean, withStoreTags = false): Promise<LibGame[]> {
@@ -165,7 +233,10 @@ export interface FindArgs {
   tags?: TagQuery;
   /** Profile-based quick chips (the library's Filters row). */
   chips?: TagChip[];
-  /** Steam user tags the game must carry (any of them, case-insensitive substring): "VR", "Anime", "Pixel Graphics"… */
+  /**
+   * Steam user tags the game must carry (any of them, case-insensitive substring; longer names also
+   * ignore spaces and hyphens, so Steam's "Roguelite" meets EGS's "Rogue-Lite"): "VR", "Anime", "Pixel Graphics"…
+   */
   steamTags?: string[];
   sort?: 'playtime' | 'recent' | 'alpha' | 'random' | 'achievements';
   limit?: number;
@@ -211,6 +282,20 @@ export function cleanTags(raw: unknown): TagQuery {
 
 export const tagsEmpty = (q: TagQuery): boolean => !q.genres && !q.moods && !q.modes && !q.themes && q.maxLengthHours === undefined && q.minLengthHours === undefined;
 
+/** Spelling-insensitive form of a tag: "Rogue-Lite" / "Roguelite", "Single Player" / "Singleplayer". */
+const squashTag = (s: string): string => s.toLowerCase().replace(/&/g, 'and').replace(/[\s\-_'’.]+/g, '');
+
+/**
+ * Does a game tag satisfy a wanted tag? A plain substring first (as always). The squashed form joins
+ * words, which would let a short wish match across a word gap ("vr" in "dev resources"), so it is
+ * used only for longer wishes.
+ */
+function tagMatches(have: string, want: string): boolean {
+  if (have.toLowerCase().includes(want)) return true;
+  const w = squashTag(want);
+  return w.length >= 6 && squashTag(have).includes(w);
+}
+
 export function applyFind(list: LibGame[], a: FindArgs): LibGame[] {
   const sources = (a.sources ?? []).map((s) => (s === 'EGS' ? 'Epic' : s));
   const tags = cleanTags(a.tags);
@@ -238,10 +323,7 @@ export function applyFind(list: LibGame[], a: FindArgs): LibGame[] {
     // Tag and chip filters need a profile; games without one can't match (the model is told so).
     if (!tagsEmpty(tags) && !(g.profile && g.profile.known && matchProfile(g.profile, tags))) return false;
     if (chips.length && !chips.every((c) => chipMatches(c, g.profile))) return false;
-    if (steamTags.length) {
-      const mine = g.storeTags.map((x) => x.toLowerCase());
-      if (!steamTags.some((want) => mine.some((have) => have.includes(want)))) return false;
-    }
+    if (steamTags.length && !steamTags.some((want) => g.storeTags.some((have) => tagMatches(have, want)))) return false;
     return true;
   });
   switch (a.sort) {

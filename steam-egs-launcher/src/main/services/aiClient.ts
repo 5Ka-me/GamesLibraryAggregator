@@ -124,6 +124,14 @@ function authHeaders(required: boolean): Record<string, string> {
   return { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` };
 }
 
+/**
+ * JSON + bearer headers for the other chutes.ai endpoints (the embedding chute uses the same key), so
+ * callers never touch the key itself. Throws Error('AI_NO_KEY') when `required` and no key is stored.
+ */
+export function chutesHeaders(required = true): Record<string, string> {
+  return authHeaders(required);
+}
+
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
   content: string;
@@ -219,7 +227,9 @@ async function chatOnce(model: string, messages: ChatMessage[], maxTokens: numbe
       messages,
       temperature: 0.2,
       max_tokens: maxTokens,
-      response_format: { type: 'json_object' },
+      // LAUNCHER_AI_JSON_MODE=off drops the provider's forced JSON mode (an experiment switch for the eval:
+      // constrained decoding is suspected of the repeated-key loops some models fall into).
+      ...(process.env.LAUNCHER_AI_JSON_MODE === 'off' ? {} : { response_format: { type: 'json_object' } }),
       // Thinking models (Qwen3) otherwise spend the budget on reasoning and return an empty content field.
       chat_template_kwargs: { enable_thinking: false },
       ...(stream ? { stream: true, stream_options: { include_usage: true } } : {}),
@@ -251,6 +261,10 @@ async function chatOnce(model: string, messages: ChatMessage[], maxTokens: numbe
   const promptTokens = Number(usageDoc?.prompt_tokens ?? 0) || 0;
   const completionTokens = Number(usageDoc?.completion_tokens ?? 0) || 0;
   addAiUsage(promptTokens, completionTokens);
+  if (process.env.LAUNCHER_AI_DEBUG) {
+    const defect = jsonDefect(text);
+    if (defect) console.log(`[ai] degenerate JSON from ${model}: ${defect}`);
+  }
   // An empty content field (reasoning-only reply, truncated output) is treated like a busy model: try the next one.
   if (!text.trim()) throw new AiHttpError(503, `empty reply from ${model}`);
   return { text, model, promptTokens, completionTokens };
@@ -291,6 +305,43 @@ export async function chatJson(messages: ChatMessage[], maxTokens: number, opts:
   }
   if (lastErr instanceof Error && isTimeout(lastErr)) throw new Error('AI_TIMEOUT: no model answered in time');
   throw lastErr instanceof Error ? lastErr : new Error('AI_RATE');
+}
+
+/**
+ * A sign that a reply degenerated even if it still parses: a key repeated inside one object, or an empty key.
+ * JSON.parse accepts both (the last duplicate wins), so a looping model ("title":"D","note":"","title":"Dungeons
+ * 3",…) would otherwise pass as a short, odd answer. Returns a short description, or null for a clean reply.
+ */
+export function jsonDefect(text: string): string | null {
+  const objects: (Set<string> | null)[] = [];
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '{') objects.push(new Set());
+    else if (ch === '[') objects.push(null);
+    else if (ch === '}' || ch === ']') objects.pop();
+    else if (ch === '"') {
+      let j = i + 1;
+      let str = '';
+      while (j < text.length && text[j] !== '"') {
+        if (text[j] === '\\') {
+          str += text[j + 1] ?? '';
+          j += 2;
+        } else str += text[j++];
+      }
+      i = j;
+      let k = j + 1;
+      while (k < text.length && /\s/.test(text[k])) k++;
+      const keys = objects[objects.length - 1];
+      // A value that swallowed the rest of the object list ("…30 min.'}, {'title':'Void Bastards',…"): the model
+      // switched to single-quoted pseudo-JSON inside a string, which parses as one long note.
+      if (text[k] !== ':' && /['"]\s*[,}\]]\s*,?\s*\{?\s*['"](title|note|answer|games|fit)['"]\s*:/.test(str)) return 'JSON inside a string';
+      if (text[k] !== ':' || !keys) continue;
+      if (!str.trim()) return 'empty key';
+      if (keys.has(str)) return `repeated key "${str.slice(0, 30)}"`;
+      keys.add(str);
+    }
+  }
+  return null;
 }
 
 /** Tolerant JSON extraction: strips code fences and anything around the outermost object. */

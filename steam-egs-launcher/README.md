@@ -29,9 +29,20 @@ See the [root README](../README.md) for features, quick start and configuration.
   - `services/assistant.ts` — the "AI" page: a multi-turn assistant on chutes.ai (OpenAI-compatible
     chat completions) that works through local *tools* (library search with coarse facts and AI-profile
     tags, random pick, store search, store facts incl. 30-day review sample, wishlist, achievements,
-    statistics). Up to 3 tool rounds per turn; every game it names is resolved against the real
-    library/store before it becomes a card with actions. Also the "worth buying?" verdict on the game
-    page (facts shown separately from the model's opinion). Key in the OS keystore (Settings → AI).
+    statistics, meaning-based library search, "more like this" store discovery). Up to 3 tool rounds
+    per turn; every game it names is resolved against the real library/store before it becomes a card
+    with actions. Recommendation requests take a two-step path instead (`services/aiPipeline.ts`): one
+    small call parses the request into a scope (my games / any games / to buy), hard constraints and
+    wishes — plus, for a genre Steam has no tag for ("anomaly hunting", "gacha"), a concept and a few
+    well-known exemplar games — or asks one clarifying question when it is really unsure; the app
+    selects candidates deterministically (filters + semantic ranking, library → wishlist → store, with
+    exemplars found in the library, on Steam or on the Epic Games Store); a separate fit-check call
+    keeps only the candidates that genuinely match, and when none of the library's do, the store is
+    searched instead; one streamed call explains the pick and never talks about how the app searched.
+    A failure falls back to the tool loop (unless the whole model chain timed out, which ends the
+    turn). Games sold only on the Epic Games Store show as Epic store cards (cover, price, a button to
+    the store page). Also the "worth buying?" verdict on the game page (facts shown separately
+    from the model's opinion). Key in the OS keystore (Settings → AI).
     Games from the library, the wishlist or the store can be attached to the chat as context (the
     "+" picker, up to 20) — e.g. pick 20 wishlist games and ask for similar ones in the store.
   - `services/inventory.ts` — the signed-in user's Steam inventory, read-only (the Inventory tab).
@@ -57,10 +68,23 @@ See the [root README](../README.md) for features, quick start and configuration.
     the Steam snapshot and can be reset; re-import merges Steam's changes and keeps local extras.
     Hidden games leave the list, the reel, statistics and the assistant's tools.
   - `services/enrichment.ts` — one-off, button-driven "game profiles" for the whole library: length,
-    genres, moods, themes, modes and a short summary per title (only titles are sent, the estimate
-    and cost are shown before the run, batches are saved as they finish). Profiles feed the game page,
-    tag chips in the library and the random reel, the hours-by-genre statistic, and make tag-based
-    search answer offline. `services/aiClient.ts` is the shared chutes.ai client.
+    genres, moods, themes, modes, keywords, a one-line pitch and a short summary per title, grounded
+    in public store facts (titles and store descriptions are sent, the estimate and cost are shown
+    before the run, batches are saved as they finish). A run collects fact cards, writes the profiles,
+    then updates the semantic index. Profiles feed the game page, tag chips in the library and the
+    random reel, the hours-by-genre statistic, and make tag-based search answer offline.
+  - `services/gameFacts.ts` — persistent per-title fact cards (`game-facts.json`): the game's Steam
+    page, the Steam page of the same title for Epic-only games, or the Epic offer — tags, features,
+    description, developer, year, reviews.
+  - `services/embeddings.ts` — the semantic index: one `Qwen/Qwen3-Embedding-8B` vector per library
+    game (chutes.ai, same key; stored in `embeddings.json`, re-embedded only when a game's text
+    changes), meaning-based ranking, and the tag resolver that maps free phrases in any language to
+    exact Steam tags.
+  - `services/similar.ts` — store discovery: Steam's "More like this" lists for reference games plus
+    tag search, filtered (owned, required/excluded tags, sale, price cap) and ranked by tags, reviews
+    and meaning.
+  - `services/aiClient.ts` is the shared chutes.ai client; `services/aiEval.ts` + `eval/` hold the
+    assistant eval harness (`npm run ai:eval`, see [eval/README.md](eval/README.md)).
     Prompts and practices: [docs/ai-integration.md](../docs/ai-integration.md).
   - `services/playtimeHistory.ts` — one playtime snapshot per day (written on every sync,
     `%APPDATA%/steam-egs-launcher/playtime-history.json`, 400 days) so the Statistics page can show
@@ -88,14 +112,14 @@ See the [root README](../README.md) for features, quick start and configuration.
     the surface is a read-only GET whitelist (library, accounts, recent, achievements, installed
     state) — no syncs, no launches, no secrets. Demo: [`docs/bridge-demo.html`](../docs/bridge-demo.html).
   - `services/steamStore.ts` / `epicStore.ts` — storefront data (front page, sections, search,
-    wishlist, game details; EGS offers/ratings via Epic's public GraphQL). Region-aware prices,
-    everything through the unified cache.
+    wishlist, game details; EGS offers/ratings via Epic's public GraphQL, also behind the AI chat's
+    Epic store cards). Region-aware prices, everything through the unified cache.
   - `services/regions.ts` / `fxRates.ts` — per-store account regions; daily USD rates for the
     approximate cross-currency price comparison.
   - `services/steamLauncher.ts` — `steam://` deep links; store pages open in the Steam client when installed.
 - **preload/** — a small typed `window.launcher` bridge (contextIsolation on).
 - **renderer/** — React UI: library, store (home/sections/wishlist/search), AI chat, random-game reel, statistics (Replay-style overview + the whole library as Steam's profile games list, batched), unified game page
-  (`GameView`, also embedded in the library's split view), Search (natural-language, see `services/ai.ts`). The shell is Steam-like: the title bar is
+  (`GameView`, also embedded in the library's split view), the AI page (`AiPage.tsx`, see `services/assistant.ts`). The shell is Steam-like: the title bar is
   drawn by the renderer (`TopBar` — section nav, update chip, profile → Settings) as a drag region with
   Windows' own min/max/close buttons overlaid in app colours (`titleBarStyle: 'hidden'` +
   `titleBarOverlay`). The library defaults to a split view — game list with icons on the left, Home
@@ -133,6 +157,10 @@ Env knobs:
 npm run build:launcher    # compile main/preload/renderer into out/
 npm run package:launcher  # + electron-builder → dist/GL-Aggregator-Setup-<version>.exe (NSIS)
 ```
+
+`npm run ai:eval` (inside `steam-egs-launcher/`) builds the app and runs the assistant eval cases
+headless against your local library with the saved chutes.ai key — it spends tokens; see
+[eval/README.md](eval/README.md).
 
 Run `fetch:legendary` before packaging — `resources/bin/legendary.exe` is bundled into the
 installer via `extraResources` (it is intentionally not committed to git).
@@ -173,6 +201,9 @@ so SmartScreen shows a warning on first install — expected for an unsigned ope
 |---|---|---|
 | Library (games, playtimes, account names, regions) | `%APPDATA%/steam-egs-launcher/library.json` | plain JSON (no secrets) |
 | Store/FX cache (7-day retention, capped) | `%APPDATA%/steam-egs-launcher/cache/*.json` | plain JSON (public storefront data) |
+| AI game profiles, store fact cards, semantic index | `%APPDATA%/steam-egs-launcher/enrichment.json`, `game-facts.json`, `embeddings.json` | plain JSON (game data only, no secrets) |
+| AI eval reports | `%APPDATA%/steam-egs-launcher/ai-eval/` | plain JSON + Markdown (no secrets) |
+| chutes.ai API key | `%APPDATA%/steam-egs-launcher/secrets.bin` | OS keystore (DPAPI) via `safeStorage` |
 | Epic OAuth session, Steam API key | `%APPDATA%/steam-egs-launcher/secrets.bin` | OS keystore (DPAPI) via `safeStorage` |
 | Steam web session | Electron partition `persist:steam` | Chromium cookie encryption |
 | Bridge pairing tokens (per website origin) | `%APPDATA%/steam-egs-launcher/secrets.bin` | OS keystore (DPAPI) via `safeStorage` |

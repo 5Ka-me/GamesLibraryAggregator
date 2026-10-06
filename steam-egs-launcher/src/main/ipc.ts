@@ -19,7 +19,7 @@ import { scanInstalledSteamAppIds } from './services/steamScan';
 import { appVersion, checkForUpdates, installUpdate, updateState } from './services/updater';
 import { aiListModels, aiStatus } from './services/aiClient';
 import { CONTEXT_LIMIT, assistantChat, gameVerdict, type ChatTurn, type ContextGame } from './services/assistant';
-import { cancelEnrichment, clearProfiles, enrichStatus, getProfiles, startEnrichment } from './services/enrichment';
+import { cancelEnrichment, clearProfiles, enrichStatus, getProfiles, startEnrichment, startIndexBuild } from './services/enrichment';
 import {
   createCollection,
   deleteCollection,
@@ -107,7 +107,13 @@ export function registerIpc(): void {
   // ----- library enrichment (AI game profiles) -----
   ipcMain.handle('enrich:status', (_e, lang: unknown) => enrichStatus(lang === 'ru' ? 'ru' : 'en'));
   ipcMain.handle('enrich:get', () => getProfiles());
-  ipcMain.handle('enrich:start', (_e, lang: unknown, redo: unknown) => startEnrichment(lang === 'ru' ? 'ru' : 'en', redo === true));
+  // `redo` used to be a boolean ("also redo other-language profiles"); older
+  // renderer code may still send it, so true keeps meaning 'otherLang'.
+  const redoMode = (v: unknown): 'none' | 'otherLang' | 'outdated' =>
+    v === true || v === 'otherLang' ? 'otherLang' : v === 'outdated' ? 'outdated' : 'none';
+  ipcMain.handle('enrich:start', (_e, lang: unknown, redo: unknown) => startEnrichment(lang === 'ru' ? 'ru' : 'en', redoMode(redo)));
+  // Embeds only (profiles already exist but the semantic index is missing or stale).
+  ipcMain.handle('enrich:index', (_e, lang: unknown) => startIndexBuild(lang === 'ru' ? 'ru' : lang === 'en' ? 'en' : undefined));
   ipcMain.handle('enrich:cancel', () => cancelEnrichment());
   ipcMain.handle('enrich:clear', (_e, lang: unknown) => {
     clearProfiles();
@@ -149,9 +155,15 @@ export function registerIpc(): void {
       : [];
     if (!Array.isArray(history) || history.length === 0 || history.length > 60) throw new Error('Invalid chat history');
     const turns: ChatTurn[] = history.map((t: unknown) => {
-      const x = t as { role?: unknown; content?: unknown };
+      const x = t as { role?: unknown; content?: unknown; games?: unknown };
       if ((x.role !== 'user' && x.role !== 'assistant') || typeof x.content !== 'string' || x.content.length > 4000) throw new Error('Invalid chat turn');
-      return { role: x.role, content: x.content };
+      // Titles an earlier assistant turn showed as cards — the pipeline keeps
+      // them out of follow-up recommendations ("more like that").
+      if (x.games === undefined || x.games === null) return { role: x.role, content: x.content };
+      if (!Array.isArray(x.games) || x.games.length > 8 || x.games.some((g) => typeof g !== 'string' || g.length > 200)) {
+        throw new Error('Invalid chat turn games');
+      }
+      return { role: x.role, content: x.content, games: x.games as string[] };
     });
     return assistantChat(turns, lang === 'ru' ? 'ru' : 'en', ctx);
   });

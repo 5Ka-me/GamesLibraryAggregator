@@ -5,6 +5,8 @@
 //   - /api/storesearch                          → search by title
 //   - IWishlistService/GetWishlist              → wishlist appids (public profiles)
 //   - IStoreBrowseService/GetItems              → batch name/price/discount for appids
+//                                                 (and English descriptions for fact cards)
+//   - IStoreBrowseService/GetStoreCategories    → category names (Single-player, Online Co-op, …)
 //
 // Everything goes through the unified memory+disk cache (services/cache.ts)
 // with stale-while-revalidate: priced data uses the "dynamic" TTL
@@ -58,12 +60,16 @@ export interface StoreItem {
    * "VR Supported" / "VR Only". Absent in metadata cached before tags were requested.
    */
   tags?: string[];
+  /** Share of positive Steam reviews (0–100, all languages); null when the game has no reviews yet. */
+  reviewPct?: number | null;
+  /** Number of Steam reviews behind reviewPct. */
+  reviewCount?: number | null;
   /** Metadata layout version; the library index refetches once when it sees an older layout. */
   metaV?: number;
 }
 
 /** Bumped when fetchMetaChunks starts recording new fields, so cached items get refreshed once. */
-export const META_VERSION = 2;
+export const META_VERSION = 3;
 
 export interface StoreSection {
   id: string;
@@ -419,7 +425,7 @@ export async function storeSearch(term: string, lang: string): Promise<StoreItem
 // ===================== Browse by tags =====================
 
 /** Everyday words → the Steam tag they mean (the tag list itself is matched case-insensitively). */
-const TAG_SYNONYMS: Record<string, string> = {
+export const TAG_SYNONYMS: Record<string, string> = {
   erotic: 'Sexual Content',
   erotica: 'Sexual Content',
   nsfw: 'Sexual Content',
@@ -451,6 +457,14 @@ const TAG_SYNONYMS: Record<string, string> = {
   farming: 'Farming Sim',
   'deck builder': 'Deckbuilding',
   deckbuilder: 'Deckbuilding',
+  // "mods" must not reach a plural fallback that turns it into "Mod", Steam's tag for products that ARE mods.
+  mods: 'Moddable',
+  'mod support': 'Moddable',
+  modding: 'Moddable',
+  // The "VR" user tag, which substring filters and the tag search both understand, rather than one of the
+  // two official VR flags (which are not tag ids).
+  'virtual reality': 'VR',
+  'vr headset': 'VR',
 };
 
 export interface StoreBrowseResult {
@@ -654,7 +668,7 @@ async function fetchMetaChunks(
     const input = {
       ids: chunk.map((appid) => ({ appid })),
       context: { language: l, country_code: cc, steam_realm: 1 },
-      data_request: { include_basic_info: true, include_assets: true, include_pricing: true, include_release: true, include_tag_count: 20, include_platforms: true },
+      data_request: { include_basic_info: true, include_assets: true, include_pricing: true, include_release: true, include_tag_count: 20, include_platforms: true, include_reviews: true },
     };
     try {
       const resp = await getJson<any>(
@@ -671,22 +685,16 @@ async function fetchMetaChunks(
           typeof si.release?.steam_release_date === 'number' && si.release.steam_release_date > 0
             ? si.release.steam_release_date
             : undefined;
-        const kind: StoreItem['kind'] =
-          si.type === 0 ? 'game' : si.type === 4 ? 'dlc' : si.type === 11 ? 'music' : typeof si.type === 'number' ? 'other' : undefined;
-        const tags = (Array.isArray(si.tags) ? (si.tags as { tagid: number }[]) : []).map((t) => names[String(t.tagid)]).filter((x): x is string => !!x);
-        // Official platform flags as tags, so "Steam Deck Verified" or "VR Only" filter like any other tag.
-        const deck = si.platforms?.steam_deck_compat_category;
-        if (deck === 3) tags.push('Steam Deck Verified');
-        else if (deck === 2) tags.push('Steam Deck Playable');
-        else if (deck === 1) tags.push('Steam Deck Unsupported');
-        const vr = si.platforms?.vr_support;
-        if (vr?.vrhmd_only) tags.push('VR Only');
-        else if (vr?.vrhmd) tags.push('VR Supported');
+        const kind = itemKind(si);
+        const tags = [...userTags(si, names), ...platformTags(si)];
+        const reviews = reviewSummary(si);
         const item: StoreItem = {
           appid: si.appid,
           name: si.name,
           ...(kind ? { kind } : {}),
           tags,
+          reviewPct: reviews.pct,
+          reviewCount: reviews.count,
           metaV: META_VERSION,
           image: assetImage(si) ?? conventionCapsule(si.appid),
           isFree: si.is_free ?? false,
@@ -721,6 +729,39 @@ function withDerivedComingSoon(item: StoreItem): StoreItem {
   return item.releaseUnix != null
     ? { ...item, comingSoon: item.releaseUnix * 1000 > Date.now() }
     : item;
+}
+
+// ---------- GetItems field readers (shared by the metadata and fact batches) ----------
+
+/** GetItems `type`: 0 game, 4 DLC, 11 soundtrack; anything else numeric is "other". */
+function itemKind(si: any): StoreItem['kind'] {
+  return si.type === 0 ? 'game' : si.type === 4 ? 'dlc' : si.type === 11 ? 'music' : typeof si.type === 'number' ? 'other' : undefined;
+}
+
+/** User tags in vote order (GetItems returns them weighted, most voted first). */
+function userTags(si: any, names: Record<string, string>): string[] {
+  return (Array.isArray(si.tags) ? (si.tags as { tagid: number }[]) : []).map((t) => names[String(t.tagid)]).filter((x): x is string => !!x);
+}
+
+/** Official platform flags as tags, so "Steam Deck Verified" or "VR Only" filter like any other tag. */
+function platformTags(si: any): string[] {
+  const out: string[] = [];
+  const deck = si.platforms?.steam_deck_compat_category;
+  if (deck === 3) out.push('Steam Deck Verified');
+  else if (deck === 2) out.push('Steam Deck Playable');
+  else if (deck === 1) out.push('Steam Deck Unsupported');
+  const vr = si.platforms?.vr_support;
+  if (vr?.vrhmd_only) out.push('VR Only');
+  else if (vr?.vrhmd) out.push('VR Supported');
+  return out;
+}
+
+/** All-language review summary (`include_reviews`); a percentage without reviews behind it means nothing. */
+function reviewSummary(si: any): { pct: number | null; count: number | null } {
+  const s = si.reviews?.summary_filtered;
+  const count = typeof s?.review_count === 'number' ? s.review_count : null;
+  const pct = typeof s?.percent_positive === 'number' && (count ?? 0) > 0 ? s.percent_positive : null;
+  return { pct, count };
 }
 
 // ===================== Section pages =====================
@@ -863,8 +904,8 @@ export async function storeSection(
 
 // ===================== Tags (user tags, like the Steam page shows) =====================
 
-// tagid → localized name; ~450 entries, static class (refreshed daily).
-async function tagNames(lang: string): Promise<Record<string, string>> {
+/** Steam user tags: tagid → localized name; ~450 entries, static class (refreshed daily). {} on failure. */
+export async function tagNames(lang: string): Promise<Record<string, string>> {
   try {
     return await cached(NS, `tags:${lang}`, TTL_STATIC_MS, async () => {
       const l = lang === 'ru' ? 'russian' : 'english';
@@ -873,11 +914,220 @@ async function tagNames(lang: string): Promise<Record<string, string>> {
       for (const tag of json?.response?.tags ?? []) {
         if (tag?.tagid && tag?.name) map[String(tag.tagid)] = tag.name;
       }
+      // An empty list is a broken answer, not a fact — throwing keeps it out of the cache for a day
+      // (fact cards and the tag resolver depend on it).
+      if (!Object.keys(map).length) throw new Error('Empty tag list');
       return map;
     });
   } catch {
     return {}; // tags row is optional
   }
+}
+
+// ===================== Store categories + raw facts (profile grounding) =====================
+
+/**
+ * Steam's store category catalog in English: categoryid → display name and type (1 player modes,
+ * 2 features, 3 controller support). Cached a day; type 0 (demo/DLC/mods) and untranslated
+ * `#category_…` placeholders are left out. {} on failure.
+ */
+export async function categoryNames(): Promise<Record<number, { name: string; type: number }>> {
+  try {
+    return await cached(NS, 'categories:en', TTL_STATIC_MS, async () => {
+      const input = encodeURIComponent(JSON.stringify({ language: 'english' }));
+      const json = await getJson<any>(`${WEB_API}/IStoreBrowseService/GetStoreCategories/v1/?input_json=${input}`);
+      const map: Record<number, { name: string; type: number }> = {};
+      for (const c of json?.response?.categories ?? []) {
+        const id = Number(c?.categoryid);
+        const type = Number(c?.type);
+        const name = typeof c?.display_name === 'string' ? c.display_name.trim() : '';
+        if (!id || !type || !name || name.startsWith('#')) continue;
+        map[id] = { name, type };
+      }
+      // An empty catalog is a broken answer, not a fact — throwing keeps it out of the cache.
+      if (!Object.keys(map).length) throw new Error('Empty category catalog');
+      return map;
+    });
+  } catch {
+    return {};
+  }
+}
+
+/** Raw store facts for a batch of appids (English text), for profile grounding. Not cached here. */
+export interface SteamAppFacts {
+  appid: number;
+  name: string;
+  type: StoreItem['kind'] | undefined;
+  shortDescription: string | null;
+  fullDescriptionBbcode: string | null;
+  developers: string[];
+  tags: string[];
+  categories: string[];
+  releaseYear: number | null;
+  reviewPct: number | null;
+  reviewCount: number | null;
+}
+
+// Full descriptions make GetItems answers big (~5 KB per app), so fact batches are smaller than the
+// metadata ones and get a longer timeout.
+const FACTS_CHUNK = 50;
+const FACTS_TIMEOUT_MS = 30_000;
+const FACTS_RETRY_MS = 3000;
+
+/** HTTP 429/5xx, a timeout or a network failure — worth one more try; other 4xx are not. */
+export function isTransientStoreError(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e);
+  const status = /HTTP (\d{3})/.exec(msg);
+  if (status) return status[1] === '429' || status[1].startsWith('5');
+  return true; // no status: network error, timeout (AbortError) or a garbled body
+}
+
+/**
+ * steamAppFacts plus the appids whose chunk failed (a transient error after the retry, or any other
+ * request-level error). Lets callers tell "Steam has no such app" (absent from a successful answer)
+ * from "ask again later" (failed).
+ */
+export async function steamAppFactsReport(
+  appids: number[]
+): Promise<{ facts: Record<number, SteamAppFacts>; failed: number[] }> {
+  const facts: Record<number, SteamAppFacts> = {};
+  const failed: number[] = [];
+  const ids = [...new Set(appids.filter((id) => Number.isInteger(id) && id > 0))];
+  if (!ids.length) return { facts, failed };
+  const [names, cats] = await Promise.all([tagNames('en'), categoryNames()]);
+  // Both catalogs come back {} only when Steam is unreachable; facts without tag or category names
+  // would be stored as if the game had none, so report everything as failed instead.
+  if (!Object.keys(names).length || !Object.keys(cats).length) return { facts, failed: ids };
+  const cc = getRegions().steamCc;
+
+  for (const chunk of chunks(ids, FACTS_CHUNK)) {
+    const input = {
+      ids: chunk.map((appid) => ({ appid })),
+      context: { language: 'english', country_code: cc, steam_realm: 1 },
+      data_request: {
+        include_basic_info: true,
+        include_full_description: true,
+        include_tag_count: 20,
+        include_release: true,
+        include_reviews: true,
+        include_platforms: true,
+      },
+    };
+    const url = `${WEB_API}/IStoreBrowseService/GetItems/v1/?input_json=${encodeURIComponent(JSON.stringify(input))}`;
+    const get = (): Promise<any> => httpJson<any>(url, { headers: { 'User-Agent': BROWSER_UA }, timeoutMs: FACTS_TIMEOUT_MS });
+    let resp: any;
+    try {
+      resp = await get();
+    } catch (e) {
+      // A hard 4xx (an edge 403 for a flagged IP, …) is not worth a retry, but it says nothing about
+      // the ids themselves: only items missing from a successful answer mean "Steam has no such app".
+      if (!isTransientStoreError(e)) {
+        failed.push(...chunk);
+        continue;
+      }
+      await new Promise((r) => setTimeout(r, FACTS_RETRY_MS));
+      try {
+        resp = await get();
+      } catch {
+        failed.push(...chunk); // skipped; the caller retries these another time
+        continue;
+      }
+    }
+    for (const si of resp?.response?.store_items ?? []) {
+      // Unknown appids come back as { appid: 0, success: 15 } — nothing to record.
+      if (!si?.appid || !si?.name) continue;
+      const basic = si.basic_info ?? {};
+      const release = si.release ?? {};
+      // The original (pre-Steam) date where Steam knows it: a 1993 game re-released in 2007 is from 1993.
+      const unix =
+        typeof release.original_release_date === 'number' && release.original_release_date > 0
+          ? release.original_release_date
+          : typeof release.steam_release_date === 'number' && release.steam_release_date > 0
+            ? release.steam_release_date
+            : null;
+      const reviews = reviewSummary(si);
+      facts[si.appid] = {
+        appid: si.appid,
+        name: String(si.name),
+        type: itemKind(si),
+        shortDescription: typeof basic.short_description === 'string' && basic.short_description.trim() ? basic.short_description : null,
+        fullDescriptionBbcode:
+          typeof si.full_description_bbcode === 'string' && si.full_description_bbcode.trim() ? si.full_description_bbcode : null,
+        developers: (Array.isArray(basic.developers) ? basic.developers : [])
+          .map((d: any) => (typeof d?.name === 'string' ? d.name.trim() : ''))
+          .filter(Boolean),
+        tags: [...userTags(si, names), ...platformTags(si)],
+        categories: categoryList(si.categories, cats),
+        releaseYear: unix != null ? new Date(unix * 1000).getUTCFullYear() : null,
+        reviewPct: reviews.pct,
+        reviewCount: reviews.count,
+      };
+    }
+  }
+  return { facts, failed };
+}
+
+/**
+ * Raw store facts for a batch of appids (English text), for profile grounding: batches of 50 via
+ * GetItems, one retry after 3 s on 429/5xx/network errors; a failing chunk is skipped (its ids are
+ * simply absent — use steamAppFactsReport to tell them from unknown apps).
+ */
+export async function steamAppFacts(appids: number[]): Promise<Record<number, SteamAppFacts>> {
+  return (await steamAppFactsReport(appids)).facts;
+}
+
+/** Short descriptions live in a namespace of their own, so they never push metadata out of NS's entry cap. */
+const ABOUT_NS = 'steamAbout';
+const ABOUT_TTL_MS = 7 * 24 * 3600_000;
+
+/**
+ * Steam's short description (English) of each game, for the AI fit check: GetItems with the basic info only —
+ * no full description, no tag or category catalogs — cached per appid for a week (an empty string = Steam has
+ * none), so only games not asked about lately are fetched. Ids Steam does not know, or whose request fails,
+ * are simply absent.
+ */
+export async function storeAbouts(appids: number[]): Promise<Record<number, string>> {
+  const out: Record<number, string> = {};
+  const missing: number[] = [];
+  for (const id of new Set(appids.filter((x) => Number.isInteger(x) && x > 0))) {
+    const hit = cacheGet<string>(ABOUT_NS, `about:${id}`, ABOUT_TTL_MS);
+    if (!hit?.fresh) missing.push(id);
+    else if (hit.data) out[id] = hit.data;
+  }
+  const { cc } = region('en');
+  for (const chunk of chunks(missing, 100)) {
+    const input = {
+      ids: chunk.map((appid) => ({ appid })),
+      context: { language: 'english', country_code: cc, steam_realm: 1 },
+      data_request: { include_basic_info: true },
+    };
+    try {
+      const resp = await getJson<any>(`${WEB_API}/IStoreBrowseService/GetItems/v1/?input_json=${encodeURIComponent(JSON.stringify(input))}`);
+      for (const si of resp?.response?.store_items ?? []) {
+        // Unknown appids come back as { appid: 0, success: 15 } — nothing to record.
+        if (!si?.appid || !si?.name) continue;
+        const text = typeof si.basic_info?.short_description === 'string' ? si.basic_info.short_description.trim() : '';
+        cacheSet(ABOUT_NS, `about:${si.appid}`, text);
+        if (text) out[si.appid] = text;
+      }
+    } catch {
+      /* skipped — the caller judges those games without a description */
+    }
+  }
+  return out;
+}
+
+/** Category ids → names: player modes first (what profiles derive modes from), then controller, then features. */
+function categoryList(raw: any, cats: Record<number, { name: string; type: number }>): string[] {
+  const out: string[] = [];
+  for (const group of ['supported_player_categoryids', 'controller_categoryids', 'feature_categoryids']) {
+    for (const id of Array.isArray(raw?.[group]) ? raw[group] : []) {
+      const name = cats[Number(id)]?.name;
+      // Several ids share a display name (Steam Workshop / Steam China Workshop).
+      if (name && !out.includes(name)) out.push(name);
+    }
+  }
+  return out;
 }
 
 // ===================== Game details =====================

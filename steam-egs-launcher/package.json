@@ -10,6 +10,7 @@
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
+    "ai:eval": "electron-vite build && electron . --ai-eval",
     "fetch:legendary": "node scripts/fetch-legendary.mjs",
     "package": "electron-vite build && electron-builder --win --publish never",
     "gen:icon": "node scripts/generate-icon.mjs",

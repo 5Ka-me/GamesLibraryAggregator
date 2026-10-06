@@ -42,6 +42,12 @@ comparison, self-managed EGS downloads, playtime & achievements statistics.
 - Games / total hours / top-10 by playtime across both stores (per-platform filter), Steam last-2-weeks activity.
 - EGS playtime is fetched from Epic's own services — both stores count.
 
+**AI** (optional, desktop launcher, your own [chutes.ai](https://chutes.ai) key)
+- A chat assistant over your library, wishlist and the Steam store: what to play tonight, "games like Hades", what to finish, whether a game is worth buying. Recommendations are selected by the app (hard filters + meaning-based ranking) and explained by the model; every named game becomes a real card.
+- Game profiles for the whole library (length, moods, play modes, keywords, a one-line pitch), grounded in public store facts, plus a semantic index for search by meaning in any language.
+- Store discovery built on Steam's "More like this" lists and tags; an eval harness (`npm run ai:eval`) for prompt and model changes.
+- Nothing that identifies your accounts is sent. Details: [docs/ai-integration.md](docs/ai-integration.md).
+
 **Web app** — a lightweight browser version of the library: "Sign in through Steam" (no keys or
 tokens to enter) shows the Steam library; with the desktop launcher running on the same machine it
 connects to the launcher's local bridge and shows the **full** merged library (both stores,
@@ -80,6 +86,7 @@ On a machine where the launcher runs, the web app reads the launcher's data dire
 | EGS downloads | Bundled [legendary](https://github.com/derrod/legendary) CLI (fetched at build time, not committed) |
 | Steam install state | Local `libraryfolders.vdf` / `appmanifest_*.acf` scan |
 | FX rates | [open.er-api.com](https://open.er-api.com) daily USD rates (price comparison only) |
+| AI (optional) | [chutes.ai](https://chutes.ai) under the user's key: OpenAI-compatible chat completions + the `Qwen/Qwen3-Embedding-8B` embedding chute; Steam "More like this" pages for store discovery |
 
 Epic sign-in happens in an embedded window on Epic's official login page; the authorization code is
 exchanged both for the local library sync and for `legendary` downloads. There is no public Epic API

@@ -96,9 +96,16 @@ function primeCloudflare(): Promise<void> {
   return priming;
 }
 
+/**
+ * Upper bound for one EGS request (headers and body). A request that never answers would otherwise hold
+ * the fact-card build (and the cache's shared in-flight promise) until the app restarts.
+ */
+const EPIC_TIMEOUT_MS = 20_000;
+
 async function graphqlOnce(query: string, variables: Record<string, unknown>): Promise<Response> {
   return epicSession().fetch(GRAPHQL_URL, {
     method: 'POST',
+    signal: AbortSignal.timeout(EPIC_TIMEOUT_MS),
     headers: {
       'Content-Type': 'application/json',
       'User-Agent': CHROME_UA,
@@ -298,6 +305,7 @@ async function fetchHtmlGallery(storeUrl: string): Promise<string[]> {
   try {
     const res = await epicSession().fetch(storeUrl, {
       headers: { 'User-Agent': CHROME_UA, Accept: 'text/html' },
+      signal: AbortSignal.timeout(EPIC_TIMEOUT_MS),
     });
     if (!res.ok) return [];
     const html = await res.text();
@@ -413,7 +421,9 @@ async function fetchDetails(
   if (ns) {
     try {
       const resp = await graphql(OFFERS_QUERY, { ns, country, locale });
-      if (resp?.errors?.length && !resp?.data) sawErrors = true;
+      // EGS often returns nested errors (a price field) next to valid results; only an answer whose
+      // offer list itself is missing is a failure, not a legit "not on EGS".
+      if (resp?.errors?.length && !resp?.data?.Catalog?.catalogOffers) sawErrors = true;
       const el = pickNamespaceElement(resp?.data?.Catalog?.catalogOffers?.elements ?? [], title);
       if (el) data = mapElement(el);
     } catch {
@@ -422,7 +432,7 @@ async function fetchDetails(
   }
   if (!data) {
     const resp = await graphql(SEARCH_QUERY, { keywords: title, country, locale });
-    if (resp?.errors?.length && !resp?.data) sawErrors = true;
+    if (resp?.errors?.length && !resp?.data?.Catalog?.searchStore) sawErrors = true;
     const el = pickElement(resp?.data?.Catalog?.searchStore?.elements ?? [], title);
     if (el) data = mapElement(el);
   }

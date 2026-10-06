@@ -1053,6 +1053,10 @@ export const GameView: React.FC<{ appid: number | null; game: Game | null; embed
               <span className="uc-header">{t('tag.summary')}</span>
               <span style={{ fontSize: 11.5, color: 'var(--muted)' }}>{t('tag.aiEstimate')}</span>
             </div>
+            {/* The pitch is written in the run's UI language; a foreign-language one would read odd next to the UI. */}
+            {profile.pitch && profile.lang === lang && (
+              <p style={{ margin: '0 0 6px', fontSize: 13.5, lineHeight: 1.5, fontStyle: 'italic', color: 'var(--text)' }}>{profile.pitch}</p>
+            )}
             <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.55, color: 'var(--text)' }}>{profile.summary}</p>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>
               <span style={{ fontSize: 10.5, color: 'var(--muted)', letterSpacing: 0.5, textTransform: 'uppercase', alignSelf: 'center' }}>{t('tag.aiTags')}</span>

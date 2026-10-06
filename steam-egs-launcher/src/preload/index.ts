@@ -23,6 +23,7 @@ import type { EpicDetails } from '../main/services/epicStore';
 import type { AiModelInfo, AiStatus } from '../main/services/aiClient';
 import type { AssistantGame, AssistantProgress, AssistantReply, ChatTurn, ContextGame, GameFacts, GameVerdict } from '../main/services/assistant';
 import type { EnrichProgress, EnrichStatus, GameProfile, TagQuery } from '../main/services/enrichment';
+import type { IndexStatus } from '../main/services/embeddings';
 import type { Collection, CollectionKind, CollectionOrigin, CollectionRule, GameHandle, ResolvedCollection, SteamImportResult } from '../main/services/collections';
 import type { GameRef } from '../main/services/libraryIndex';
 import type { CardSet, CardSetsState, InvApp, InvAppData, InvAppState, InvAsset, InvChange, InvClass, InvLine, InvOverview, InvPrice, InvTag } from '../main/services/inventory';
@@ -31,7 +32,7 @@ export type { CardSet, CardSetsState, InvApp, InvAppData, InvAppState, InvAsset,
 
 export type { Collection, CollectionKind, CollectionOrigin, CollectionRule, GameHandle, GameRef, ResolvedCollection, SteamImportResult };
 
-export type { AiModelInfo, AiStatus, AssistantGame, AssistantProgress, AssistantReply, ChatTurn, ContextGame, GameFacts, GameVerdict, EnrichProgress, EnrichStatus, GameProfile, TagQuery };
+export type { AiModelInfo, AiStatus, AssistantGame, AssistantProgress, AssistantReply, ChatTurn, ContextGame, GameFacts, GameVerdict, EnrichProgress, EnrichStatus, GameProfile, IndexStatus, TagQuery };
 
 export type { EpicDetails, GameDetails, StoreHome, StoreItem, StoreSectionPage, WishlistEntry, WishlistItem };
 
@@ -80,7 +81,12 @@ const launcher = {
   // Library enrichment (AI game profiles) — button-driven, progress streams as events.
   enrichStatus: (lang: string): Promise<EnrichStatus> => ipcRenderer.invoke('enrich:status', lang),
   enrichGet: (): Promise<Record<string, GameProfile>> => ipcRenderer.invoke('enrich:get'),
-  enrichStart: (lang: string, redoOtherLang?: boolean): Promise<EnrichStatus> => ipcRenderer.invoke('enrich:start', lang, redoOtherLang ?? false),
+  /** Starts a profile run. `redo`: 'otherLang' also redoes profiles in another language, 'outdated' also
+   *  rebuilds title-only (v1) profiles from store facts; `true` is the legacy spelling of 'otherLang'. */
+  enrichStart: (lang: string, redo?: boolean | 'none' | 'otherLang' | 'outdated'): Promise<EnrichStatus> => ipcRenderer.invoke('enrich:start', lang, redo ?? 'none'),
+  /** Builds only the semantic index (embeddings) for games whose vector is missing or stale.
+   *  `lang` only shapes the returned status (other-language counts). */
+  enrichIndex: (lang?: string): Promise<EnrichStatus> => ipcRenderer.invoke('enrich:index', lang),
   enrichCancel: (): Promise<void> => ipcRenderer.invoke('enrich:cancel'),
   enrichClear: (lang: string): Promise<EnrichStatus> => ipcRenderer.invoke('enrich:clear', lang),
   // Collections (Steam-like): built-ins favorite/hidden, manual and dynamic user collections, Steam import.

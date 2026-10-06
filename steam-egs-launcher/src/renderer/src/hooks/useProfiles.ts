@@ -24,8 +24,12 @@ export function useProfiles(): Record<string, GameProfile> {
     if (!cached) void load();
     if (!subscribed) {
       subscribed = true;
-      // A run stores profiles batch by batch — pick them up as they land.
-      window.launcher.onEnrichProgress(() => void load());
+      // A run stores profiles batch by batch — pick them up as they land. The facts and index
+      // phases change no profile but report up to 4 times a second, and every reload re-renders
+      // the whole library, so only profile-phase events and the end of a run (incl. "delete all") reload.
+      window.launcher.onEnrichProgress((p) => {
+        if (!p?.running || (p.phase !== 'facts' && p.phase !== 'index')) void load();
+      });
     }
     return () => {
       listeners.delete(setProfiles);

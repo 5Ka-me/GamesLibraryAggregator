@@ -1,0 +1,304 @@
+[
+  {
+    "id": "vr-library-en",
+    "message": "What VR games do I have in my library?",
+    "expect": { "answerLang": "en", "owned": true, "minGames": 1, "haveTagAny": ["VR"] }
+  },
+  {
+    "id": "vr-library-ru",
+    "message": "Во что поиграть в VR из моей библиотеки?",
+    "expect": { "answerLang": "ru", "owned": true, "minGames": 1, "haveTagAny": ["VR"] }
+  },
+  {
+    "id": "coop-tonight-en",
+    "message": "Need something co-op to play with a friend online tonight",
+    "expect": { "answerLang": "en", "minGames": 2, "maxGames": 8, "haveTagAny": ["Co-op"], "haveModeAny": ["coop_online"] }
+  },
+  {
+    "id": "coop-slang-ru",
+    "message": "чё поиграть с корешем по сетке сегодня вечером?",
+    "expect": {
+      "answerLang": "ru",
+      "minGames": 2,
+      "maxGames": 8,
+      "haveTagAny": ["Co-op", "Multiplayer", "Online PvP", "PvP", "Massively Multiplayer"],
+      "haveModeAny": ["coop_online", "pvp", "mmo"]
+    }
+  },
+  {
+    "id": "short-weekend-en",
+    "message": "Give me a few short games from my library I can finish over a weekend",
+    "expect": { "answerLang": "en", "owned": true, "minGames": 2, "maxLengthHours": 15 }
+  },
+  {
+    "id": "short-5h-ru",
+    "message": "Посоветуй короткие игры часов на 5 из того, что у меня есть",
+    "expect": { "answerLang": "ru", "owned": true, "minGames": 2, "maxLengthHours": 6 }
+  },
+  {
+    "id": "like-hades-library-en",
+    "message": "What do I own that plays like Hades?",
+    "expect": {
+      "answerLang": "en",
+      "owned": true,
+      "minGames": 2,
+      "excludeTitles": ["Hades"],
+      "haveTagAny": ["Roguelike", "Hack and Slash", "Action RPG", "Dungeon Crawler", "Isometric"],
+      "expectAnyOf": ["Hades II", "Dead Cells", "Bastion", "Transistor", "Children of Morta", "Enter the Gungeon", "Risk of Rain 2", "Rogue Legacy 2", "Death's Door", "Curse of the Dead Gods", "Cult of the Lamb", "Hyper Light Drifter", "Moonlighter", "Ravenswatch"]
+    }
+  },
+  {
+    "id": "like-hades-store-ru",
+    "message": "Найди в магазине что-нибудь похожее на Hades, чего у меня ещё нет",
+    "expect": {
+      "answerLang": "ru",
+      "owned": false,
+      "minGames": 2,
+      "excludeTitles": ["Hades"],
+      "toolsInclude": ["store_discover|store_browse|store_search"],
+      "haveTagAny": ["Roguelike", "Hack and Slash", "Action RPG", "Dungeon Crawler", "Isometric"],
+      "expectAnyOf": ["Hades II", "Dead Cells", "Bastion", "Transistor", "Children of Morta", "Enter the Gungeon", "Risk of Rain 2", "Rogue Legacy 2", "Death's Door", "Curse of the Dead Gods", "Cult of the Lamb", "Hyper Light Drifter", "Moonlighter", "Ravenswatch", "Windblown"]
+    }
+  },
+  {
+    "id": "cozy-evening-en",
+    "message": "Something cozy and relaxing for a quiet evening",
+    "expect": { "answerLang": "en", "minGames": 2, "lackTags": ["Horror", "Gore"] }
+  },
+  {
+    "id": "cozy-no-stress-ru",
+    "message": "Хочу что-нибудь уютное и спокойное, без стресса",
+    "expect": { "answerLang": "ru", "minGames": 2, "lackTags": ["Horror", "Gore", "Souls-like"] }
+  },
+  {
+    "id": "story-not-horror-en",
+    "message": "A story-rich game for tonight, but no horror please",
+    "expect": { "answerLang": "en", "minGames": 2, "lackTags": ["Horror"] }
+  },
+  {
+    "id": "atmospheric-not-horror-ru",
+    "message": "Посоветуй атмосферную игру на вечер, только не хоррор",
+    "expect": { "answerLang": "ru", "minGames": 2, "lackTags": ["Horror"] }
+  },
+  {
+    "id": "anime-store-en",
+    "message": "Show me some anime games in the Steam store",
+    "expect": { "answerLang": "en", "owned": false, "minGames": 2, "haveTagAny": ["Anime"], "toolsInclude": ["store_discover|store_browse"] }
+  },
+  {
+    "id": "nsfw-store-ru",
+    "message": "Покажи игры для взрослых 18+ в магазине Steam",
+    "expect": {
+      "answerLang": "ru",
+      "owned": false,
+      "minGames": 2,
+      "haveTagAny": ["Sexual Content", "Nudity", "Hentai", "NSFW", "Mature"],
+      "toolsInclude": ["store_discover|store_browse"]
+    }
+  },
+  {
+    "id": "steam-deck-verified-en",
+    "message": "Which of my games are Steam Deck Verified?",
+    "expect": { "answerLang": "en", "owned": true, "minGames": 1, "haveTagAny": ["Steam Deck Verified"] }
+  },
+  {
+    "id": "backlog-never-launched-ru",
+    "message": "Что из купленного я ни разу не запускал? Выбери три",
+    "expect": { "answerLang": "ru", "owned": true, "minGames": 1, "maxGames": 5 }
+  },
+  {
+    "id": "almost-perfect-achievements-en",
+    "message": "Which games am I close to getting 100% achievements in?",
+    "expect": { "answerLang": "en", "owned": true, "minGames": 1, "toolsInclude": ["library_find"], "answerMatches": "\\d+\\s?%|\\d+\\s?/\\s?\\d+" }
+  },
+  {
+    "id": "total-hours-ru",
+    "message": "Сколько всего часов я наиграл?",
+    "expect": {
+      "answerLang": "ru",
+      "toolsInclude": ["library_find"],
+      "toolsExclude": ["store_browse", "store_discover", "store_search"],
+      "answerMatches": "\\d",
+      "maxLatencyMs": 90000
+    }
+  },
+  {
+    "id": "worth-buying-en",
+    "message": "Is Baldur's Gate 3 worth buying right now?",
+    "expect": { "answerLang": "en", "maxGames": 2, "toolsInclude": ["store_game_info"], "answerMatches": "\\d+\\s?%" }
+  },
+  {
+    "id": "wishlist-on-sale-ru",
+    "message": "Что из моего списка желаемого сейчас со скидкой?",
+    "expect": { "answerLang": "ru", "owned": false, "toolsInclude": ["wishlist"] }
+  },
+  {
+    "id": "inventory-most-valuable-en",
+    "message": "What's the most valuable item in my Steam inventory?",
+    "expect": { "answerLang": "en", "maxGames": 0, "toolsInclude": ["inventory_find"], "toolsExclude": ["store_browse", "store_discover"] }
+  },
+  {
+    "id": "collections-list-ru",
+    "message": "Какие у меня есть коллекции?",
+    "expect": {
+      "answerLang": "ru",
+      "toolsInclude": ["collections_list"],
+      "toolsExclude": ["store_browse", "store_discover", "store_search"],
+      "maxLatencyMs": 60000
+    }
+  },
+  {
+    "id": "followup-more-store-en",
+    "history": [
+      { "role": "user", "content": "Recommend some roguelikes from the Steam store" },
+      {
+        "role": "assistant",
+        "content": "Three highly rated roguelikes in the store:\n- **Dead Cells** — 2D action roguelite, 97% positive\n- **Slay the Spire** — deckbuilding roguelike, 97% positive\n- **Hades** — action roguelike, 98% positive",
+        "games": ["Dead Cells", "Slay the Spire", "Hades"]
+      }
+    ],
+    "message": "More",
+    "expect": { "answerLang": "en", "owned": false, "minGames": 2, "noRepeat": true, "haveTagAny": ["Roguelike"] }
+  },
+  {
+    "id": "followup-more-coop-ru",
+    "history": [
+      { "role": "user", "content": "Посоветуй кооперативные игры в магазине" },
+      {
+        "role": "assistant",
+        "content": "Вот кооперативные игры из магазина Steam:\n- **It Takes Two** — кооператив на двоих, 95% положительных\n- **Deep Rock Galactic** — кооператив до 4 игроков, 96% положительных\n- **Valheim** — выживание до 10 игроков, 93% положительных",
+        "games": ["It Takes Two", "Deep Rock Galactic", "Valheim"]
+      }
+    ],
+    "message": "Ещё",
+    "expect": { "answerLang": "ru", "owned": false, "minGames": 2, "noRepeat": true, "haveTagAny": ["Co-op"] }
+  },
+  {
+    "id": "context-similar-en",
+    "context": [
+      { "title": "Hollow Knight", "origin": "store" },
+      { "title": "Celeste", "origin": "store" }
+    ],
+    "message": "Find me games similar to these",
+    "expect": {
+      "answerLang": "en",
+      "minGames": 2,
+      "excludeTitles": ["Hollow Knight", "Celeste"],
+      "haveTagAny": ["Platformer", "2D Platformer", "Precision Platformer", "Metroidvania", "Souls-like"]
+    }
+  },
+  {
+    "id": "context-similar-ru",
+    "context": [{ "title": "Stardew Valley", "origin": "store" }],
+    "message": "Подбери что-нибудь похожее на эту игру",
+    "expect": {
+      "answerLang": "ru",
+      "minGames": 2,
+      "excludeTitles": ["Stardew Valley"],
+      "lackTags": ["Horror"],
+      "haveTagAny": ["Farming Sim", "Life Sim", "Farming", "Agriculture", "Cozy", "Relaxing", "Wholesome", "Casual", "Simulation", "Crafting", "Pixel Graphics"]
+    }
+  },
+  {
+    "id": "ambiguous-one-word-en",
+    "message": "bored",
+    "expect": { "answerLang": "en", "maxGames": 8, "maxLatencyMs": 120000 }
+  },
+  {
+    "id": "ambiguous-one-word-ru",
+    "message": "Скучно",
+    "expect": { "answerLang": "ru", "maxGames": 8, "maxLatencyMs": 120000 }
+  },
+  {
+    "id": "session-30min-ru",
+    "message": "Есть полчаса — во что быстро сыграть?",
+    "expect": { "answerLang": "ru", "minGames": 1, "lackTags": ["Massively Multiplayer", "MMORPG"] }
+  },
+  {
+    "id": "price-cap-store-en",
+    "message": "Recommend a good roguelike in the store under $10",
+    "expect": { "answerLang": "en", "owned": false, "minGames": 2, "maxPrice": 10, "haveTagAny": ["Roguelike"] }
+  },
+  {
+    "id": "genre-anomaly-ru",
+    "message": "Какие есть игры в жанре поиска аномалий?",
+    "expect": {
+      "answerLang": "ru",
+      "minGames": 2,
+      "excludeTitles": [
+        "S.T.A.L.K.E.R.: Shadow of Chernobyl",
+        "S.T.A.L.K.E.R.: Shadow of Chornobyl - Enhanced Edition",
+        "S.T.A.L.K.E.R.: Clear Sky",
+        "S.T.A.L.K.E.R.: Clear Sky - Enhanced Edition",
+        "S.T.A.L.K.E.R.: Call of Pripyat",
+        "S.T.A.L.K.E.R.: Call of Prypiat - Enhanced Edition",
+        "S.T.A.L.K.E.R. 2: Heart of Chornobyl",
+        "The Operator",
+        "Nobody Wants to Die",
+        ">observer_",
+        "Sherlock Holmes: Crimes and Punishments",
+        "Paradise Killer"
+      ],
+      "requireAnyOf": ["The Exit 8", "Platform 8", "I'm on Observation Duty", "Shinkansen 0", "Exit 8", "The Exit 8 VR", "Escape Floor", "Night Security", "Anomaly Collector"]
+    }
+  },
+  {
+    "id": "genre-gacha-ru",
+    "message": "Какие игры есть в жанре гачи?",
+    "expect": {
+      "answerLang": "ru",
+      "minGames": 2,
+      "requireAnyOf": ["Genshin Impact", "Wuthering Waves", "Honkai: Star Rail", "Zenless Zone Zero", "Tower of Fantasy", "Infinity Nikki", "Blue Archive", "Arknights", "Snowbreak: Containment Zone", "Punishing: Gray Raven", "Reverse: 1999", "Limbus Company", "Girls' Frontline 2: Exilium"]
+    }
+  },
+  {
+    "id": "like-genshin-followup-ru",
+    "history": [
+      { "role": "user", "content": "Какие игры есть в жанре гачи?" },
+      { "role": "assistant", "content": "Не нашёл подходящих игр. Попробуйте уточнить запрос." }
+    ],
+    "message": "Да, но есть игры по типу геншин импакт. Хочу похожее",
+    "expect": {
+      "answerLang": "ru",
+      "excludeTitles": ["Genshin Impact", "The Elder Scrolls V: Skyrim Special Edition", "The Elder Scrolls V: Skyrim", "The Elder Scrolls Online", "Hogwarts Legacy", "Cyberpunk 2077", "Two Worlds: Epic Edition"],
+      "requireAnyOf": ["Wuthering Waves", "Honkai: Star Rail", "Zenless Zone Zero", "Tower of Fantasy", "Infinity Nikki", "Blue Archive", "Arknights", "Snowbreak: Containment Zone", "Punishing: Gray Raven", "Reverse: 1999", "Limbus Company", "Girls' Frontline 2: Exilium"]
+    }
+  },
+  {
+    "id": "genre-anomaly-en",
+    "message": "Recommend games where you hunt for anomalies, like The Exit 8",
+    "expect": {
+      "answerLang": "en",
+      "excludeTitles": ["The Exit 8"],
+      "requireAnyOf": ["Platform 8", "I'm on Observation Duty", "Shinkansen 0", "The Exit 8 VR", "Escape Floor", "Night Security", "Anomaly Collector"]
+    }
+  },
+  {
+    "id": "holdout-time-loop-ru",
+    "message": "Посоветуй игры с временной петлёй",
+    "expect": {
+      "answerLang": "ru",
+      "minGames": 2,
+      "requireAnyOf": ["DEATHLOOP", "Outer Wilds", "Twelve Minutes", "12 Minutes", "The Forgotten City", "Minit", "Returnal", "The Sexy Brutale", "Elsinore", "Loop Hero", "The Invincible", "Death and Taxes", "Superliminal", "Paradise Killer", "Lemnis Gate", "Void Stranger"]
+    }
+  },
+  {
+    "id": "holdout-backrooms-en",
+    "message": "Any liminal space games like the Backrooms?",
+    "expect": {
+      "answerLang": "en",
+      "minGames": 2,
+      "requireAnyOf": ["The Backrooms 1998", "Escape the Backrooms", "POOLS", "Anemoiapolis", "The Complex: Found Footage", "Enter the Backrooms", "Inside the Backrooms", "Backrooms", "The Exit 8", "Platform 8", "Liminal", "Dreamcore", "Superliminal"]
+    }
+  },
+  {
+    "id": "holdout-extraction-ru",
+    "message": "Какие есть экстракшн-шутеры?",
+    "expect": {
+      "answerLang": "ru",
+      "minGames": 2,
+      "haveTagAny": ["Extraction Shooter", "PvPvE", "Looter Shooter", "Shooter", "FPS", "Tactical"],
+      "requireAnyOf": ["Escape from Tarkov", "Hunt: Showdown 1896", "Hunt: Showdown", "Arena Breakout: Infinite", "Dark and Darker", "ARC Raiders", "Hell is Others", "Deceive Inc.", "Gray Zone Warfare", "Delta Force", "Marathon", "Marauders", "Dungeonborne", "Mecharashi", "Exfil", "Wildgate"]
+    }
+  }
+]

@@ -189,23 +189,105 @@ const EnrichmentBlock: React.FC<{ enabled: boolean }> = ({ enabled }) => {
   const { t, lang } = useI18n();
   const [st, setSt] = useState<EnrichStatus | null>(null);
   const [progress, setProgress] = useState<EnrichProgress | null>(null);
-  // Which run the warning is for: the missing games, or missing + profiles written in another language.
-  const [confirm, setConfirm] = useState<'none' | 'missing' | 'lang'>('none');
+  // Which run the warning is for: the missing games; missing + profiles written in another language;
+  // or missing + other-language + title-only (v1) profiles rebuilt from store facts.
+  const [confirm, setConfirm] = useState<'none' | 'missing' | 'lang' | 'outdated'>('none');
+  // The last run was started by "Build index" (embeddings only), so its result line talks about the index.
+  const [indexOnly, setIndexOnly] = useState(false);
 
   const refresh = useCallback(() => window.launcher.enrichStatus(lang).then(setSt).catch(() => undefined), [lang]);
   useEffect(() => {
     void refresh();
     return window.launcher.onEnrichProgress((p) => {
       setProgress(p);
-      if (!p.running) void refresh();
+      if (!p.running) {
+        // `st` may still be the snapshot enrichStart returned (running, facts 0 of N); until refresh()
+        // resolves it would win over this final event and flash the bar back to step 1 with Stop.
+        setSt((s) => (s ? { ...s, running: false, progress: p } : s));
+        void refresh();
+      }
     });
   }, [refresh]);
 
+  // Reopening Settings mid-run (or right after Start): no event of this run has arrived yet, but the
+  // status carries its progress — prefer that over the previous run's final event.
+  const live = progress?.running ? progress : st?.running ? st.progress ?? progress : progress;
   const running = !!(progress?.running || st?.running);
-  const est = confirm === 'lang' ? st?.estimateOtherLang : st?.estimate;
-  const count = confirm === 'lang' ? (st?.missing ?? 0) + (st?.otherLang ?? 0) : st?.missing ?? 0;
+  const est = confirm === 'lang' ? st?.estimateOtherLang : confirm === 'outdated' ? st?.estimateOutdated : st?.estimate;
+  // 'outdated' scope: main counts missing + other-language + outdated titles deduped (what its estimate covers).
+  const count =
+    confirm === 'lang'
+      ? (st?.missing ?? 0) + (st?.otherLang ?? 0)
+      : confirm === 'outdated'
+        ? st?.todoOutdated ?? 0
+        : st?.missing ?? 0;
   const usd = est?.usd;
   const cost = usd == null ? '' : usd < 0.01 ? '< $0.01' : `≈ $${usd.toFixed(2)}`;
+  const index = st?.index ?? null;
+
+  const start = () => {
+    const redo = confirm === 'lang' ? 'otherLang' : confirm === 'outdated' ? 'outdated' : 'none';
+    setConfirm('none');
+    setIndexOnly(false);
+    void window.launcher.enrichStart(lang, redo).then(setSt);
+  };
+  const buildIndex = () => {
+    setIndexOnly(true);
+    void window.launcher.enrichIndex(lang).then(setSt);
+  };
+
+  /** Bar fill (0..1) and label for the phase the run is in: store facts → profiles → semantic index. */
+  const phaseView = (p: EnrichProgress): { pct: number; text: string } => {
+    // The `indexOnly` state is lost when Settings is reopened mid-run; a full run always has a facts
+    // phase, so an index phase without factsTotal is an index-only build either way.
+    const idx = indexOnly || (p.phase === 'index' && p.factsTotal == null);
+    const step = (i: number) => (idx ? '' : `${i}/3 · `);
+    if (p.phase === 'facts') {
+      const d = p.factsDone ?? 0;
+      const n = p.factsTotal ?? 0;
+      return { pct: n ? d / n : 0, text: step(1) + t('enrich.phase.facts', { d, n }) };
+    }
+    if (p.phase === 'index') {
+      // An index-only run reports the stale count as `total`; a full run fills indexDone/indexTotal.
+      const d = p.indexDone ?? (idx ? p.done : 0);
+      const n = p.indexTotal ?? (idx ? p.total : 0);
+      return { pct: n ? d / n : 0, text: step(3) + (n ? t('enrich.phase.index', { d, n }) : t('enrich.phase.indexStart')) };
+    }
+    const d = p.done + p.failed;
+    return { pct: p.total ? d / p.total : 0, text: step(2) + t('enrich.progress', { d, n: p.total, tok: (p.promptTokens + p.completionTokens).toLocaleString() }) };
+  };
+  const view = running && live ? phaseView(live) : null;
+  // A run that ended in the index phase without a facts phase was an index-only build.
+  const finishedIndexOnly = !!progress && (indexOnly || (progress.phase === 'index' && progress.factsTotal == null));
+  // Main prefixes non-fatal phase failures ("INDEX: …", "FACTS: …"); the profiles themselves are fine then.
+  // "FACTS: MISSED n/m" counts the titles the facts step got nothing for.
+  const errorText = (e: string): string => {
+    const missed = /^FACTS:\s*MISSED (\d+)\/(\d+)$/.exec(e);
+    if (missed) return t('enrich.factsMissed', { n: missed[1], m: missed[2] });
+    return (
+      e.startsWith('INDEX:')
+        ? t('enrich.index.failed', { e: e.slice(6).trim() })
+        : e.startsWith('FACTS:')
+          ? t('enrich.factsFailed', { e: e.slice(6).trim() })
+          : e
+    ).slice(0, 200);
+  };
+  // A failed index-only build reports only the failure: "updated: 0 of N" next to it would contradict it.
+  const resultHead = !progress
+    ? null
+    : progress.cancelled
+      ? t('enrich.cancelled')
+      : finishedIndexOnly
+        ? progress.error
+          ? null
+          : t('enrich.index.finished', { d: progress.indexDone ?? progress.done, n: progress.indexTotal ?? progress.total })
+        : t('enrich.finished', { d: progress.done, f: progress.failed, tok: (progress.promptTokens + progress.completionTokens).toLocaleString() });
+  // The phase-failure texts are written as a clause after " · "; standing alone they start a sentence.
+  const resultError = progress?.error
+    ? resultHead
+      ? ` · ${errorText(progress.error)}`
+      : errorText(progress.error).replace(/^./, (c) => c.toUpperCase())
+    : '';
 
   return (
     <div style={{ marginTop: 18, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
@@ -219,13 +301,13 @@ const EnrichmentBlock: React.FC<{ enabled: boolean }> = ({ enabled }) => {
         </p>
       )}
 
-      {running && progress ? (
+      {view ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 520 }}>
           <div style={{ height: 8, borderRadius: 4, background: 'var(--panel-2)', overflow: 'hidden' }}>
-            <div style={{ width: `${progress.total ? Math.round(((progress.done + progress.failed) / progress.total) * 100) : 0}%`, height: '100%', background: 'var(--accent)', borderRadius: 4, transition: 'width 0.4s ease' }} />
+            <div style={{ width: `${Math.round(Math.min(1, view.pct) * 100)}%`, height: '100%', background: 'var(--accent)', borderRadius: 4, transition: 'width 0.4s ease' }} />
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 12.5, color: 'var(--muted)' }}>
-            <span>{t('enrich.progress', { d: progress.done + progress.failed, n: progress.total, tok: (progress.promptTokens + progress.completionTokens).toLocaleString() })}</span>
+            <span>{view.text}</span>
             <button style={btn} onClick={() => void window.launcher.enrichCancel()}>{t('enrich.cancel')}</button>
           </div>
         </div>
@@ -236,7 +318,7 @@ const EnrichmentBlock: React.FC<{ enabled: boolean }> = ({ enabled }) => {
             {t('enrich.warnBody', { n: count, req: est.requests, tok: est.tokens.toLocaleString(), cost, min: est.minutes, model: est.model })}
           </p>
           <div style={{ display: 'flex', gap: 8 }}>
-            <button style={syncBtn} onClick={() => { const redo = confirm === 'lang'; setConfirm('none'); void window.launcher.enrichStart(lang, redo).then(setSt); }}>{t('enrich.confirm')}</button>
+            <button style={syncBtn} onClick={start}>{t('enrich.confirm')}</button>
             <button style={btn} onClick={() => setConfirm('none')}>{t('enrich.back')}</button>
           </div>
         </div>
@@ -255,13 +337,33 @@ const EnrichmentBlock: React.FC<{ enabled: boolean }> = ({ enabled }) => {
               <button style={btn} disabled={!enabled} onClick={() => setConfirm('lang')}>{t('enrich.redoLang')}</button>
             </div>
           )}
+          {st.outdated > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', fontSize: 13 }}>
+              <span style={{ color: 'var(--muted)' }}>{t('enrich.outdated', { n: st.outdated })}</span>
+              <button style={btn} disabled={!enabled} onClick={() => setConfirm('outdated')}>{t('enrich.rebuildOutdated')}</button>
+            </div>
+          )}
+          {/* The semantic index is built at the end of every run; this covers profiles that exist without
+              vectors (an older version, a failed or stopped index phase). Embeddings are cheap — no confirm box. */}
+          {index && st.profiles > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', fontSize: 13 }}>
+              <span style={{ color: 'var(--muted)' }}>{t('enrich.index.state', { i: index.indexed, g: index.games })}</span>
+              {index.stale > 0 && (
+                <>
+                  <button style={btn} disabled={!enabled || index.building} onClick={buildIndex}>{t('enrich.index.build')}</button>
+                  <span style={{ fontSize: 12, color: 'var(--muted)' }}>{t('enrich.index.cost', { n: index.stale })}</span>
+                </>
+              )}
+            </div>
+          )}
+          {index?.lastError && <p style={{ margin: 0, fontSize: 12, color: 'var(--muted)' }}>{t('enrich.index.lastError', { e: index.lastError.slice(0, 200) })}</p>}
         </div>
       ) : null}
 
-      {progress && !progress.running && progress.total > 0 && (
+      {progress && !progress.running && !running && progress.total > 0 && (
         <p style={{ margin: '10px 0 0', fontSize: 12.5, color: progress.error ? '#ff9f6b' : 'var(--muted)' }}>
-          {progress.cancelled ? t('enrich.cancelled') : t('enrich.finished', { d: progress.done, f: progress.failed, tok: (progress.promptTokens + progress.completionTokens).toLocaleString() })}
-          {progress.error ? ` · ${progress.error.slice(0, 160)}` : ''}
+          {resultHead}
+          {resultError}
         </p>
       )}
       {st && st.profiles > 0 && !running && (

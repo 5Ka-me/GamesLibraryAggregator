@@ -1,7 +1,8 @@
 import { app, BrowserWindow, session, shell } from 'electron';
 import { existsSync } from 'fs';
-import { join } from 'path';
+import { join, resolve } from 'path';
 import { registerIpc } from './ipc';
+import { runAiEval } from './services/aiEval';
 import { setEventTarget } from './services/events';
 import { startAutoSync } from './services/autoSync';
 import { startBridge } from './services/bridge';
@@ -29,6 +30,9 @@ function applyCsp(): void {
     });
   });
 }
+
+/** `electron . --ai-eval`: a headless eval run instead of the app (see runAiEvalAndExit). */
+const AI_EVAL = process.argv.includes('--ai-eval');
 
 // Same id electron-builder stamps on the Start-menu/desktop shortcuts, so the
 // taskbar groups the window with its shortcut and shows the shortcut's icon
@@ -117,9 +121,35 @@ function createWindow(): void {
   }
 }
 
+/**
+ * `electron . --ai-eval` (npm run ai:eval): runs the assistant eval headless
+ * and exits — 0 all cases passed, 1 a case failed, 2 the harness could not run.
+ * Options: `--ai-eval-cases=<path>` (default eval/ai-cases.json in the app
+ * folder) and `--ai-eval-only=<id,id>`.
+ */
+async function runAiEvalAndExit(): Promise<void> {
+  const arg = (name: string): string | undefined => {
+    const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
+    return hit ? hit.slice(name.length + 3) : undefined;
+  };
+  const casesArg = arg('ai-eval-cases');
+  const casesPath = casesArg ? resolve(casesArg) : join(app.getAppPath(), 'eval', 'ai-cases.json');
+  const only = (arg('ai-eval-only') ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  try {
+    const { failed } = await runAiEval({ casesPath, only });
+    app.exit(failed ? 1 : 0);
+  } catch (err) {
+    console.error('[ai-eval] could not run:', err instanceof Error ? err.message : err);
+    app.exit(2);
+  }
+}
+
 app
   .whenReady()
   .then(() => {
+    // The eval needs only userData (key, library, profiles): no window, sync,
+    // updater, bridge or IPC, so nothing else writes the same files meanwhile.
+    if (AI_EVAL) return runAiEvalAndExit();
     if (app.isPackaged) applyCsp();
     registerIpc();
     createWindow();
@@ -137,5 +167,10 @@ app
   });
 
 app.on('window-all-closed', () => {
+  // The eval has no window of its own, but helpers open short-lived hidden
+  // ones (Epic's Cloudflare priming); closing the last of those must not quit
+  // mid-run with exit code 0 and no report. runAiEvalAndExit exits itself.
+  // (A listener is required either way: without one Electron quits too.)
+  if (AI_EVAL) return;
   if (process.platform !== 'darwin') app.quit();
 });

@@ -93,13 +93,42 @@ function Markdown({ text }: { text: string }) {
   );
 }
 
-/** An owned game named by the model: cover, note, and the actions the user would otherwise click through to. */
+/** Row cover: the Steam header by appid, else the Epic store cover or the EGS library icon; an empty box when none loads. */
 const Cover: React.FC<{ g: AssistantGame; w: number; h: number }> = ({ g, w, h }) => {
-  const src = g.appid ? `${CDN}/${g.appid}/header.jpg` : g.iconUrl ?? null;
+  // `image` is absent on replies saved before Epic store cards existed — `??` covers undefined too.
+  const src = g.appid ? `${CDN}/${g.appid}/header.jpg` : g.image ?? g.iconUrl ?? null;
+  const [broken, setBroken] = useState(false);
+  useEffect(() => setBroken(false), [src]);
   const box: React.CSSProperties = { width: w, height: h, borderRadius: 4, background: 'var(--panel-2)', flex: '0 0 auto', objectFit: 'cover' };
-  return src ? <img src={src} alt="" loading="lazy" draggable={false} style={box} /> : <span style={{ ...box, display: 'inline-block' }} />;
+  return src && !broken ? <img src={src} alt="" loading="lazy" draggable={false} style={box} onError={() => setBroken(true)} /> : <span style={{ ...box, display: 'inline-block' }} />;
 };
 
+/** A not-owned game sold on the Epic Games Store but not on Steam: cover, note, price and the store page. */
+const EpicStoreRow: React.FC<{ g: AssistantGame }> = ({ g }) => {
+  const { t } = useI18n();
+  // The main process opens the Epic launcher's store page when it is installed, else the browser.
+  const open = () => {
+    if (g.epicUrl) void window.launcher.openExternal(g.epicUrl);
+  };
+  return (
+    <div className="lib-row" style={{ height: 'auto', minHeight: 56, padding: '6px 10px', cursor: g.epicUrl ? 'pointer' : 'default', alignItems: 'center' }} onClick={open} title={g.title}>
+      <Cover g={g} w={92} h={43} />
+      <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <span className="ttl" style={{ fontWeight: 600 }}>{g.title}</span>
+        {g.note && <span style={{ fontSize: 11.5, color: 'var(--muted)' }}>{g.note}</span>}
+      </span>
+      {/* The main process sends free games as the literal 'Free'; other prices come formatted by the Epic store. */}
+      {g.price && <span style={{ fontSize: 12, fontWeight: 600, flex: '0 0 auto', whiteSpace: 'nowrap' }}>{g.price === 'Free' ? t('store.free') : g.price}</span>}
+      {g.epicUrl && (
+        <button className="pill" style={{ padding: '4px 10px', fontSize: 12, flex: '0 0 auto' }} onClick={(e) => { e.stopPropagation(); open(); }}>
+          {t('chat.epicStore')} →
+        </button>
+      )}
+    </div>
+  );
+};
+
+/** An owned game named by the model: cover, note, and the actions the user would otherwise click through to. */
 const OwnedRow: React.FC<{ g: AssistantGame }> = ({ g }) => {
   const { t } = useI18n();
   const navigate = useNavigate();
@@ -223,7 +252,15 @@ const AiPage: React.FC = () => {
       setBusy(true);
       setProgress({ phase: 'thinking', tools: [], round: 0 });
       try {
-        const reply = await window.launcher.aiChat(base.map((m) => ({ role: m.role, content: m.content })), lang, context);
+        // Assistant turns carry the titles they showed as cards, so a follow-up ("more") does not
+        // recommend them again. Capped to what ipc accepts (8 titles of ≤ 200 chars).
+        const history = base.map((m) => {
+          const games = m.role === 'assistant' && m.reply && Array.isArray(m.reply.games)
+            ? m.reply.games.map((g) => g.title).filter((x) => typeof x === 'string' && x.length <= 200).slice(0, 8)
+            : undefined;
+          return games?.length ? { role: m.role, content: m.content, games } : { role: m.role, content: m.content };
+        });
+        const reply = await window.launcher.aiChat(history, lang, context);
         const next = [...base, { id: uid(), role: 'assistant' as const, content: reply.answer, reply }];
         setMsgs(next);
         saveChat(next);
@@ -325,6 +362,8 @@ const AiPage: React.FC = () => {
                       {m.reply.games.map((g) =>
                         g.owned ? (
                           <OwnedRow key={`${g.title}-${g.appid ?? g.epicAppName ?? ''}`} g={g} />
+                        ) : g.store === 'epic' ? (
+                          <EpicStoreRow key={`epic-${g.title}`} g={g} />
                         ) : g.appid && storeMeta[g.appid] ? (
                           <div key={g.title} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
                             <ItemCard item={storeMeta[g.appid]} own={own} />
